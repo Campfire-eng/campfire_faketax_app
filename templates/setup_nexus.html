@@ -7,9 +7,10 @@
 <p class="muted">Pick the states where this workspace has nexus. Invoices shipping anywhere else get no tax. You can change this later from Campfire.</p>
 {% if error %}<p class="error">{{ error }}</p>{% endif %}
 <form method="post">
+  <p><label><input type="checkbox" id="select-all"> <strong>Select all</strong> <span class="muted">(states with a sales tax)</span></label></p>
   <div class="grid">
     {% for j in jurisdictions %}
-      <label><input type="checkbox" name="nexus" value="{{ j.code }}" {% if j.code in nexus %}checked{% endif %}>
+      <label><input type="checkbox" name="nexus" value="{{ j.code }}" data-taxed="{{ 1 if j.has_sales_tax else 0 }}" {% if j.code in nexus %}checked{% endif %}>
         {{ j.name }} <span class="tag">{% if j.has_sales_tax %}{{ "%.2f"|format(j.combined_rate) }}%{% else %}no sales tax{% endif %}</span></label>
     {% endfor %}
   </div>
@@ -19,4 +20,15 @@
     </select></label></p>
   <div class="actions"><button type="submit">Continue</button></div>
 </form>
+<script>
+(function () {
+  const all = document.getElementById("select-all");
+  const boxes = Array.from(document.querySelectorAll('input[name="nexus"]'));
+  const taxed = boxes.filter((box) => box.dataset.taxed === "1");
+  function sync() { all.checked = taxed.length > 0 && taxed.every((box) => box.checked); }
+  all.addEventListener("change", () => { taxed.forEach((box) => { box.checked = all.checked; }); });
+  boxes.forEach((box) => box.addEventListener("change", sync));
+  sync();
+})();
+</script>
 {% endblock %}
