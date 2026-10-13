@@ -16,13 +16,13 @@ otherwise the workspace's `default_rate` install config (5.00 unless changed). P
 2. **Signing secret**: on the app, rotate the signing secret and copy the `whsec_…` value (it is
    shown once).
 3. `cp .env.example .env` and paste `CLIENT_ID`, `CLIENT_SECRET` and `SIGNING_SECRET`.
-4. **Manifest**: paste `manifest.json` into the app's Manifest tab and apply it. It sets the
+4. **Manifest**: paste `manifest.json` into the app's Manifest tab and save. It sets the
    app's details (redirect URL `http://localhost:3999/callback`, connect URL, the
    `invoices:read` and `invoices:write` scopes), the allowed domain, five buttons, two panels and
    the invoice event subscription. The app section is versioned: applying it opens a development version,
    so click **Promote** on the app page to make it live. For a private app that is immediate,
    with no review. The allowed domain, signing secret, slots and events are not versioned and
-   take effect as soon as the manifest is applied.
+   take effect as soon as the manifest is saved.
 5. **Feature flag**: in Django admin (http://localhost:8001/admin), give the workspace the
    `oauth_app_extensions` customer feature flag. Without it no slot shows and no event is sent.
 6. Run it:
