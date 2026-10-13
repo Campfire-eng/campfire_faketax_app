@@ -168,6 +168,7 @@ def test_settings_panel_reads_and_saves_install_config(app_module: ModuleType, m
 def _authorize_browser(client: Any, customer_id: int = CUSTOMER_ID) -> None:
     with client.session_transaction() as browser:
         browser["workspaces"] = [customer_id]
+        browser["user"] = {"customer_id": customer_id, "customer_name": "Acme", "user_id": 7, "name": "Pat", "email": "pat@acme.example"}
         browser["return_to"] = "http://localhost:3000/v2/settings/connections/apps/abc"
 
 
@@ -191,8 +192,11 @@ def test_onboarding_sets_nexus_creates_the_line_field_and_returns_to_campfire(ap
     assert done.status_code == 200 and b"/v2/settings/connections/apps/abc" in done.data
 
 
-def test_setup_refuses_a_browser_that_never_authorized_the_workspace(app_module: ModuleType) -> None:
-    assert app_module.app.test_client().get(f"/setup/{CUSTOMER_ID}").status_code == 403
+def test_setup_refuses_a_browser_signed_in_to_another_workspace(app_module: ModuleType) -> None:
+    client = app_module.app.test_client()
+    _authorize_browser(client, customer_id=99)
+
+    assert client.get(f"/setup/{CUSTOMER_ID}").status_code == 403
 
 
 def test_manage_link_opens_the_workspace_once_and_saves_overrides(app_module: ModuleType) -> None:
@@ -235,12 +239,47 @@ def test_credit_memo_event_taxes_lines_by_the_clients_state(app_module: ModuleTy
 
 def test_home_opens_a_workspaces_manage_screen(app_module: ModuleType) -> None:
     client = app_module.app.test_client()
+    _authorize_browser(client)
 
     home = client.get("/")
     opened = client.get(f"/open/{CUSTOMER_ID}/manage")
     page = client.get(f"/manage/{CUSTOMER_ID}")
 
     assert home.status_code == 200 and b"Manage jurisdictions" in home.data and b"Run onboarding" in home.data
+    assert b"Signed in as <strong>Pat</strong>" in home.data and b"Acme" in home.data
     assert opened.status_code == 302 and opened.headers["Location"].endswith(f"/manage/{CUSTOMER_ID}")
     assert page.status_code == 200
     assert client.get("/open/999/manage").status_code == 404
+
+
+def test_signed_out_browsers_land_on_the_login_page(app_module: ModuleType) -> None:
+    client = app_module.app.test_client()
+
+    home = client.get("/")
+    login = client.get("/login")
+    manage = client.get(f"/manage/{CUSTOMER_ID}")
+
+    assert home.status_code == 302 and "/login" in home.headers["Location"]
+    assert login.status_code == 200 and b"Login with Campfire" in login.data
+    assert manage.status_code == 302 and "/login" in manage.headers["Location"]
+
+
+def test_sign_out_clears_the_session(app_module: ModuleType) -> None:
+    client = app_module.app.test_client()
+    _authorize_browser(client)
+
+    out = client.get("/logout")
+    after = client.get("/")
+
+    assert out.status_code == 302 and out.headers["Location"].endswith("/login")
+    assert after.status_code == 302
+
+
+def test_manage_link_signs_in_with_the_connections_person_when_it_matches(app_module: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(app_module.campfire, "get_install_config", lambda **kw: {"customer_id": CUSTOMER_ID, "customer_name": "Acme", "user": {"id": 7, "name": "Pat", "email": "pat@acme.example"}, "install_config": {}})
+    client = app_module.app.test_client()
+
+    client.get(f"/manage?cf_ctx={_token(object_ids=[], surface='manage')}")
+    page = client.get(f"/manage/{CUSTOMER_ID}")
+
+    assert b"Signed in as <strong>Pat</strong>" in page.data and b"Acme" in page.data

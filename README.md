@@ -41,8 +41,8 @@ Until a workspace finishes onboarding FakeTax taxes everywhere, so the demo work
 
    Flask listens on 0.0.0.0 because Campfire calls the webhooks from inside Docker, where it
    rewrites `localhost` to `host.docker.internal`.
-7. **Connect**: click Connect on the app's connection page in Campfire (or at
-   http://localhost:3999). After the callback FakeTax asks Campfire which workspace the token
+7. **Connect**: click Connect on the app's connection page in Campfire (or **Login with Campfire**
+   at http://localhost:3999, which is the same OAuth flow). After the callback FakeTax asks Campfire which workspace the token
    belongs to (`GET /ca/api/v1/oauth-app-install/config` returns `customer_id`), writes its
    install config, and sends a new workspace through **onboarding**: pick the states with nexus
    and a default tax code, then let FakeTax create the `Tax code` custom field on invoice lines
@@ -56,6 +56,15 @@ Until a workspace finishes onboarding FakeTax taxes everywhere, so the demo work
 
 If you rotate the signing secret again, Campfire signs with both secrets for 24 hours. Put the new
 one in `SIGNING_SECRET` (and optionally the old one in `SIGNING_SECRET_PREVIOUS`) and restart.
+
+## Signing in
+
+FakeTax has no accounts of its own. **Login with Campfire** runs the OAuth authorization; the
+callback asks Campfire who connected (`GET /ca/api/v1/oauth-app-install/config` returns the
+workspace name and the person's name and email) and signs that person in for that workspace.
+A manage link from Campfire signs in the same way. The navbar shows who is signed in and where,
+with Sign out. Pages that act for a workspace (home, onboarding, manage, settings) redirect to
+the login page when signed out; webhooks, frames and report links use their own tokens.
 
 ## Five-minute demo
 

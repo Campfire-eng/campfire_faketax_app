@@ -28,8 +28,26 @@
   .grid label { margin: 0; } .tag { display: inline-block; font-size: 12px; padding: 1px 6px; border-radius: 10px; background: var(--soft); color: var(--muted); }
   input.rate { width: 70px; text-align: right; }
   .actions { display: flex; gap: 8px; align-items: center; margin-top: 16px; }
+  nav { display: flex; justify-content: space-between; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); font-size: 14px; }
+  nav .brand { font-weight: 700; text-decoration: none; color: var(--fg); } nav .brand span { color: var(--accent); }
+  nav .who { color: var(--muted); } nav .who strong { color: var(--fg); } nav a { color: var(--accent); }
 </style>
 {% block head %}{% endblock %}
 </head>
-<body><main>{% block body %}{% endblock %}</main></body>
+<body>
+{% if not hide_nav %}
+<nav>
+  <a class="brand" href="{{ url_for('home') }}"><span>Fake</span>Tax</a>
+  <span class="who">
+    {% if current_user %}
+      Signed in as <strong>{{ current_user.name or current_user.email or ('user ' ~ current_user.user_id) }}</strong>
+      · {{ current_user.customer_name }}
+      · <a href="{{ url_for('logout') }}">Sign out</a>
+    {% else %}
+      <a href="{{ url_for('login') }}">Sign in</a>
+    {% endif %}
+  </span>
+</nav>
+{% endif %}
+<main>{% block body %}{% endblock %}</main></body>
 </html>

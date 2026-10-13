@@ -5,7 +5,7 @@
 {% if error %}<p class="error">{{ error }}</p>{% endif %}
 {% if notice %}<p class="notice">{{ notice }}</p>{% endif %}
 {% if not signing_configured %}<p class="error">SIGNING_SECRET is not set in .env: Campfire's webhooks will be refused.</p>{% endif %}
-<p><a class="button" href="{{ url_for('connect') }}">Connect a Campfire workspace</a></p>
+<p><a class="button" href="{{ url_for('connect') }}">Connect another workspace</a></p>
 
 <h2>Where things are</h2>
 <table>
@@ -52,6 +52,6 @@
       <a href="{{ url_for('disconnect', customer_id=g.customer_id) }}">Forget tokens</a></p>
   </div>
 {% else %}
-  <p class="muted">None yet.</p>
+  <p class="muted">No workspaces connected for this sign-in yet.</p>
 {% endfor %}
 {% endblock %}

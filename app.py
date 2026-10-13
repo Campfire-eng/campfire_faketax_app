@@ -12,7 +12,9 @@ import os
 import secrets
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
+from functools import wraps
 from decimal import Decimal
 from typing import Any
 from urllib.parse import urlencode
@@ -62,6 +64,39 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", secrets.token_hex(32))
 store: Store = Store(path=DB_PATH)
 campfire: Campfire = Campfire(store=store, base_url=CAMPFIRE_BASE_URL, client_id=CLIENT_ID, client_secret=CLIENT_SECRET)
+
+
+def _current_user() -> dict[str, Any] | None:
+    """Who this browser signed in as: set by the OAuth callback or a manage link from Campfire."""
+    user: Any = session.get("user")
+    return user if isinstance(user, dict) else None
+
+
+@app.context_processor
+def _inject_current_user() -> dict[str, Any]:
+    return {"current_user": _current_user()}
+
+
+def login_required(view: Callable[..., ResponseReturnValue]) -> Callable[..., ResponseReturnValue]:
+    @wraps(view)
+    def wrapped(*args: Any, **kwargs: Any) -> ResponseReturnValue:
+        if _current_user() is None:
+            return redirect(url_for("login", next=request.path))
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
+def _sign_in(*, customer_id: int, whoami: dict[str, Any] | None, user_id: int | None = None) -> None:
+    person: dict[str, Any] = (whoami or {}).get("user") or {}
+    session["user"] = {
+        "customer_id": customer_id,
+        "customer_name": (whoami or {}).get("customer_name") or f"Workspace {customer_id}",
+        "user_id": person.get("id", user_id),
+        "name": person.get("name") or "",
+        "email": person.get("email") or "",
+    }
+    _remember_workspace(customer_id)
 
 
 @dataclass(frozen=True)
@@ -205,8 +240,23 @@ def _json_error(error: Any) -> ResponseReturnValue:
     return jsonify({"error": getattr(error, "description", str(error))}), getattr(error, "code", 400)
 
 
+@app.get("/login")
+def login() -> ResponseReturnValue:
+    if _current_user() is not None:
+        return redirect(url_for("home"))
+    return render_template("login.html", signing_configured=bool(SIGNING_SECRETS))
+
+
+@app.get("/logout")
+def logout() -> ResponseReturnValue:
+    session.clear()
+    return redirect(url_for("login"))
+
+
 @app.get("/")
+@login_required
 def home() -> ResponseReturnValue:
+    mine: list[int] = [int(i) for i in session.get("workspaces", [])]
     workspaces: list[dict[str, Any]] = [
         {
             "grant": grant,
@@ -216,6 +266,7 @@ def home() -> ResponseReturnValue:
             "tax": store.workspace(customer_id=grant.customer_id),
         }
         for grant in store.grants()
+        if grant.customer_id in mine
     ]
     return render_template(
         "home.html",
@@ -235,11 +286,11 @@ def _campfire_return_url(candidate: str | None) -> str | None:
 
 
 @app.get("/open/<int:customer_id>/<string:screen>")
+@login_required
 def open_screen(customer_id: int, screen: str) -> ResponseReturnValue:
-    """The home page is the demo's back door: it may open any connected workspace's screens."""
     if store.grant(customer_id=customer_id) is None:
         abort(404, "not connected")
-    _remember_workspace(customer_id)
+    _require_workspace(customer_id)
     if screen == "setup":
         return redirect(url_for("setup_nexus", customer_id=customer_id))
     return redirect(url_for("manage_workspace", customer_id=customer_id))
@@ -279,7 +330,7 @@ def callback() -> ResponseReturnValue:
     store.save_tokens(customer_id=customer_id, tokens=tokens)
     config: dict[str, str] = {**DEFAULT_INSTALL_CONFIG, **(current.get("install_config") or {}), "base_url": PUBLIC_BASE_URL}
     campfire.put_install_config(customer_id=customer_id, config=config)
-    _remember_workspace(customer_id)
+    _sign_in(customer_id=customer_id, whoami=current)
     workspace: WorkspaceTax | None = store.workspace(customer_id=customer_id)
     if workspace is None or workspace.onboarded_at is None:
         return redirect(url_for("setup_nexus", customer_id=customer_id))
@@ -309,6 +360,7 @@ def _tax_code_from_form() -> str:
 
 
 @app.route("/setup/<int:customer_id>", methods=["GET", "POST"])
+@login_required
 def setup_nexus(customer_id: int) -> ResponseReturnValue:
     _require_workspace(customer_id)
     workspace: WorkspaceTax | None = store.workspace(customer_id=customer_id)
@@ -327,6 +379,7 @@ def setup_nexus(customer_id: int) -> ResponseReturnValue:
 
 
 @app.route("/setup/<int:customer_id>/field", methods=["GET", "POST"])
+@login_required
 def setup_field(customer_id: int) -> ResponseReturnValue:
     _require_workspace(customer_id)
     workspace: WorkspaceTax = store.workspace(customer_id=customer_id) or store.save_workspace(customer_id=customer_id)
@@ -356,6 +409,7 @@ def setup_field(customer_id: int) -> ResponseReturnValue:
 
 
 @app.get("/setup/<int:customer_id>/done")
+@login_required
 def setup_done(customer_id: int) -> ResponseReturnValue:
     _require_workspace(customer_id)
     workspace: WorkspaceTax = store.save_workspace(customer_id=customer_id, onboarded=True)
@@ -380,12 +434,26 @@ def manage_entry() -> ResponseReturnValue:
     if claims.get("surface") != "manage":
         return render_template("message.html", title="Wrong link", message="This token is not a manage link."), 403
     customer_id: int = int(claims["customer_id"])
-    _remember_workspace(customer_id)
-    session["manage_claims"] = {"user_id": claims.get("user_id"), "customer_id": customer_id}
+    user_id: int | None = int(claims["user_id"]) if claims.get("user_id") is not None else None
+    whoami: dict[str, Any] | None = None
+    grant = store.grant(customer_id=customer_id)
+    if grant is not None:
+        try:
+            # The connection token names the person who connected; only trust it for the same person.
+            candidate: dict[str, Any] = campfire.get_install_config(access_token=grant.access_token)
+            if (candidate.get("user") or {}).get("id") == user_id:
+                whoami = candidate
+            else:
+                whoami = {"customer_name": candidate.get("customer_name")}
+        except requests.RequestException:
+            whoami = None
+    _sign_in(customer_id=customer_id, whoami=whoami, user_id=user_id)
+    session["manage_claims"] = {"user_id": user_id, "customer_id": customer_id}
     return redirect(url_for("manage_workspace", customer_id=customer_id))
 
 
 @app.route("/manage/<int:customer_id>", methods=["GET", "POST"])
+@login_required
 def manage_workspace(customer_id: int) -> ResponseReturnValue:
     _require_workspace(customer_id)
     error: str | None = None
@@ -425,7 +493,9 @@ def manage_workspace(customer_id: int) -> ResponseReturnValue:
 
 
 @app.get("/refresh/<int:customer_id>")
+@login_required
 def refresh(customer_id: int) -> ResponseReturnValue:
+    _require_workspace(customer_id)
     try:
         campfire.refresh(customer_id=customer_id)
     except NotConnected as e:
@@ -434,13 +504,17 @@ def refresh(customer_id: int) -> ResponseReturnValue:
 
 
 @app.get("/disconnect/<int:customer_id>")
+@login_required
 def disconnect(customer_id: int) -> ResponseReturnValue:
+    _require_workspace(customer_id)
     store.delete_grant(customer_id=customer_id)
     return redirect(url_for("home", notice=f"Forgot tokens for workspace {customer_id}"))
 
 
 @app.post("/workspaces/<int:customer_id>/settings")
+@login_required
 def save_settings(customer_id: int) -> ResponseReturnValue:
+    _require_workspace(customer_id)
     default_rate: str = request.form.get("default_rate", "").strip()
     if default_rate and parse_rate(default_rate) is None:
         return redirect(url_for("home", error="Default rate must be a number between 0 and 100, or blank"))

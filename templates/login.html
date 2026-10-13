@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% set hide_nav = true %}
+{% block title %}Sign in to FakeTax{% endblock %}
+{% block body %}
+<div class="card" style="text-align:center; margin-top: 64px; padding: 40px">
+  <h1><span>Fake</span>Tax</h1>
+  <p class="muted">Sales tax for Campfire invoices and credit memos.</p>
+  {% if not signing_configured %}<p class="error">SIGNING_SECRET is not set in .env: Campfire's webhooks will be refused.</p>{% endif %}
+  <p style="margin-top:24px"><a class="button" href="{{ url_for('connect') }}">Login with Campfire</a></p>
+  <p class="muted" style="margin-top:16px">Campfire asks you to authorize FakeTax for one of your workspaces, then brings you back here.</p>
+</div>
+{% endblock %}
