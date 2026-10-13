@@ -283,3 +283,13 @@ def test_manage_link_signs_in_with_the_connections_person_when_it_matches(app_mo
     page = client.get(f"/manage/{CUSTOMER_ID}")
 
     assert b"Signed in as <strong>Pat</strong>" in page.data and b"Acme" in page.data
+
+
+def test_embedded_frames_have_no_navbar(app_module: ModuleType) -> None:
+    client = app_module.app.test_client()
+
+    breakdown = client.get("/frame/breakdown/11")
+    settings = client.get("/frame/settings")
+    login = client.get("/login")
+
+    assert b"<nav>" not in breakdown.data and b"<nav>" not in settings.data and b"<nav>" not in login.data
