@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}FakeTax setup{% endblock %}
+{% block body %}
+<h1><span>Fake</span>Tax setup · workspace {{ customer_id }}</h1>
+{% include "_steps.html" %}
+<h2>Tax codes on your lines</h2>
+<p class="muted">FakeTax adds a <strong>Tax code</strong> custom field to invoice lines and credit memo lines in Campfire so each line can say how it is taxed. Lines without a value use your default, <strong>{{ default_label }}</strong>.</p>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+<table>
+  <thead><tr><th>Code</th><th>Means</th></tr></thead>
+  <tbody>{% for code in tax_codes %}<tr><td><code>{{ code.code }}</code> {{ code.label }}</td><td class="muted">{{ code.description }}</td></tr>{% endfor %}</tbody>
+</table>
+<form method="post">
+  <div class="actions">
+    <button type="submit">Create the field in Campfire</button>
+    <a class="muted" href="{{ url_for('setup_done', customer_id=customer_id, skip=1) }}">Skip for now</a>
+  </div>
+</form>
+{% endblock %}

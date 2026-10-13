@@ -1,6 +1,8 @@
 from decimal import Decimal
 
+from store import WorkspaceTax
 from tax import (
+    compute_credit_memo_tax,
     compute_invoice_tax,
     is_self_echo,
     line_tax,
@@ -48,15 +50,15 @@ class TestComputeInvoiceTax:
         assert result.lines[0].tax == Decimal("20.00")
 
     def test_uses_install_default_outside_table(self) -> None:
-        invoice = _invoice(address="Portland, OR 97201", lines=[{"id": 1, "amount": 100, "tax": 0}])
+        invoice = _invoice(address="Boise, ID 83702", lines=[{"id": 1, "amount": 100, "tax": 0}])
 
         result = compute_invoice_tax(invoice=invoice, default_rate="5.00")
 
         assert result.rate == Decimal("5.00")
-        assert result.description == "FakeTax OR 5.00%"
+        assert result.description == "FakeTax ID 5.00%"
 
     def test_needs_rate_without_table_match_or_default(self) -> None:
-        invoice = _invoice(address="Portland, OR 97201", lines=[{"id": 1, "amount": 100, "tax": 0}])
+        invoice = _invoice(address="Boise, ID 83702", lines=[{"id": 1, "amount": 100, "tax": 0}])
 
         result = compute_invoice_tax(invoice=invoice, default_rate="")
 
@@ -120,3 +122,63 @@ class TestLoopGuard:
 
     def test_empty_change_list_is_not_an_echo(self) -> None:
         assert not is_self_echo([])
+
+
+def _workspace(**overrides) -> WorkspaceTax:
+    values = {
+        "customer_id": 42,
+        "nexus": ["CA", "TX"],
+        "overrides": {},
+        "default_tax_code": "TAXABLE",
+        "tax_code_field": "tax_code",
+        "onboarded_at": 1.0,
+    }
+    values.update(overrides)
+    return WorkspaceTax(**values)
+
+
+class TestNexusAndTaxCodes:
+    def test_no_tax_outside_nexus(self) -> None:
+        invoice = _invoice(address="Albany, NY 12207", lines=[{"id": 1, "amount": 100, "tax": 0}])
+
+        result = compute_invoice_tax(invoice=invoice, default_rate="5.00", workspace=_workspace())
+
+        assert result.rate == Decimal("0") and not result.nexus
+        assert result.description == "FakeTax NY no nexus"
+        assert result.lines[0].tax == Decimal("0")
+
+    def test_override_beats_the_table_inside_nexus(self) -> None:
+        invoice = _invoice(address="Oakland, CA 94607", lines=[{"id": 1, "amount": 100, "tax": 0}])
+
+        result = compute_invoice_tax(invoice=invoice, default_rate="", workspace=_workspace(overrides={"CA": "9.50"}))
+
+        assert result.rate == Decimal("9.50") and result.lines[0].tax == Decimal("9.50")
+
+    def test_line_tax_codes_decide_taxability(self) -> None:
+        invoice = _invoice(
+            address="Austin, TX 78701",
+            lines=[
+                {"id": 1, "amount": 100, "tax": 0, "custom_field_tax_code": "SAAS"},
+                {"id": 2, "amount": 100, "tax": 0, "custom_field_tax_code": "EXEMPT"},
+                {"id": 3, "amount": 100, "tax": 0},
+            ],
+        )
+
+        result = compute_invoice_tax(invoice=invoice, default_rate="", workspace=_workspace(default_tax_code="SERVICE"))
+
+        assert [line.taxable for line in result.lines] == [True, False, True]
+        assert [line.tax for line in result.lines] == [Decimal("6.25"), Decimal("0"), Decimal("6.25")]
+
+    def test_no_sales_tax_state_is_zero_not_unknown(self) -> None:
+        invoice = _invoice(address="Portland, OR 97201", lines=[{"id": 1, "amount": 100, "tax": 0}])
+
+        result = compute_invoice_tax(invoice=invoice, default_rate="", workspace=_workspace(nexus=["OR"]))
+
+        assert not result.needs_rate and result.description == "FakeTax OR no sales tax"
+
+    def test_credit_memo_uses_the_given_state(self) -> None:
+        memo = {"id": 9, "lines": [{"id": 1, "amount": "40.00", "tax": "0"}]}
+
+        result = compute_credit_memo_tax(memo=memo, state="CA", default_rate="", workspace=_workspace())
+
+        assert result.lines[0].tax == Decimal("2.90") and result.description == "FakeTax CA 7.25%"

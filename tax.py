@@ -6,13 +6,9 @@ from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
 
-STATE_RATES: dict[str, Decimal] = {
-    "CA": Decimal("7.25"),
-    "NY": Decimal("8.00"),
-    "TX": Decimal("6.25"),
-    "WA": Decimal("6.50"),
-}
-STATE_NAMES: dict[str, str] = {"CALIFORNIA": "CA", "NEW YORK": "NY", "TEXAS": "TX", "WASHINGTON": "WA"}
+from jurisdictions import JURISDICTIONS, STATE_NAMES, Jurisdiction, code_is_taxable
+from store import WorkspaceTax
+
 CENTS: Decimal = Decimal("0.01")
 
 # Fields FakeTax's own write changes; an update touching only these is our echo, not a user edit.
@@ -42,6 +38,10 @@ _ZIP_STATE_RE = re.compile(r"\b([A-Z]{2})\s+\d{5}(?:-\d{4})?\b")
 _COMMA_STATE_RE = re.compile(r",\s*([A-Za-z]{2})\b")
 
 
+# Credit memo lines carry fewer fields than invoice lines; the same replace-all rule applies.
+WRITABLE_CREDIT_MEMO_LINE_FIELDS: tuple[str, ...] = ("product", "account", "description", "amount", "department")
+
+
 @dataclass(frozen=True)
 class LineTax:
     line_id: int | None
@@ -49,6 +49,8 @@ class LineTax:
     base: Decimal
     tax: Decimal
     current_tax: Decimal
+    tax_code: str = "TAXABLE"
+    taxable: bool = True
 
 
 @dataclass(frozen=True)
@@ -57,6 +59,8 @@ class TaxResult:
     rate: Decimal | None
     description: str
     lines: list[LineTax]
+    # False when the workspace has no nexus in the state: the rate is then 0, not unknown.
+    nexus: bool = True
 
     @property
     def needs_rate(self) -> bool:
@@ -106,43 +110,115 @@ def shipping_state(invoice: Mapping[str, Any]) -> str | None:
     return state_from_address(invoice.get("shipping_address")) or state_from_address(invoice.get("location_of_sale"))
 
 
-def resolve_rate(*, state: str | None, default_rate: str | None) -> Decimal | None:
-    if state in STATE_RATES:
-        return STATE_RATES[state]
+def jurisdiction_rate(*, state: str, workspace: WorkspaceTax | None) -> Decimal:
+    """The workspace's override for the state, else the seeded combined rate."""
+    override: str | None = workspace.overrides.get(state) if workspace else None
+    parsed: Decimal | None = parse_rate(override)
+    if parsed is not None:
+        return parsed
+    return JURISDICTIONS[state].combined_rate
+
+
+def has_nexus(*, state: str, workspace: WorkspaceTax | None) -> bool:
+    """Before onboarding FakeTax taxes everywhere, as a demo should; after it, only where told."""
+    return workspace is None or state in workspace.nexus
+
+
+def resolve_rate(*, state: str | None, default_rate: str | None, workspace: WorkspaceTax | None = None) -> Decimal | None:
+    if state in JURISDICTIONS:
+        if not has_nexus(state=state, workspace=workspace):
+            return Decimal("0")
+        return jurisdiction_rate(state=state, workspace=workspace)
     return parse_rate(default_rate)
 
 
-def tax_description(*, state: str | None, rate: Decimal) -> str:
+def tax_description(*, state: str | None, rate: Decimal, nexus: bool = True) -> str:
+    if state and not nexus:
+        return f"FakeTax {state} no nexus"
+    if state in JURISDICTIONS and not JURISDICTIONS[state].has_sales_tax and rate == 0:
+        return f"FakeTax {state} no sales tax"
     return f"FakeTax {state} {rate:.2f}%" if state else f"FakeTax {rate:.2f}%"
+
+
+def line_tax_code(*, line: Mapping[str, Any], workspace: WorkspaceTax | None) -> str:
+    """The line's tax code from the custom field onboarding created, else the workspace default."""
+    if workspace is None:
+        return "TAXABLE"
+    value: Any = line.get(f"custom_field_{workspace.tax_code_field}") if workspace.tax_code_field else None
+    return str(value).strip().upper() if value else workspace.default_tax_code
 
 
 def line_tax(*, amount: Decimal, discount: Decimal, rate: Decimal) -> Decimal:
     return ((amount - discount) * rate / Decimal("100")).quantize(CENTS, rounding=ROUND_HALF_UP)
 
 
-def compute_invoice_tax(
-    *, invoice: Mapping[str, Any], default_rate: str | None, rate_override: Decimal | None = None
+def compute_lines_tax(
+    *,
+    lines_in: list[Mapping[str, Any]],
+    state: str | None,
+    default_rate: str | None,
+    workspace: WorkspaceTax | None,
+    rate_override: Decimal | None,
 ) -> TaxResult:
-    state: str | None = shipping_state(invoice)
-    rate: Decimal | None = rate_override if rate_override is not None else resolve_rate(state=state, default_rate=default_rate)
+    nexus: bool = state is None or state not in JURISDICTIONS or has_nexus(state=state, workspace=workspace)
+    rate: Decimal | None = (
+        rate_override
+        if rate_override is not None
+        else resolve_rate(state=state, default_rate=default_rate, workspace=workspace)
+    )
+    jurisdiction: Jurisdiction | None = JURISDICTIONS.get(state or "")
     lines: list[LineTax] = []
-    for line in invoice.get("lines") or []:
+    for line in lines_in:
         amount: Decimal = to_decimal(line.get("amount"))
         discount: Decimal = to_decimal(line.get("discount"))
+        code: str = line_tax_code(line=line, workspace=workspace)
+        taxable: bool = code_is_taxable(code=code, jurisdiction=jurisdiction) if jurisdiction else code != "EXEMPT"
         lines.append(
             LineTax(
                 line_id=line.get("id"),
                 description=line.get("description") or line.get("product_name") or "",
                 base=amount - discount,
-                tax=line_tax(amount=amount, discount=discount, rate=rate) if rate is not None else Decimal("0"),
+                tax=line_tax(amount=amount, discount=discount, rate=rate) if rate is not None and taxable else Decimal("0"),
                 current_tax=to_decimal(line.get("tax")),
+                tax_code=code,
+                taxable=taxable,
             )
         )
     return TaxResult(
         state=state,
         rate=rate,
-        description=tax_description(state=state, rate=rate) if rate is not None else "",
+        description=tax_description(state=state, rate=rate, nexus=nexus) if rate is not None else "",
         lines=lines,
+        nexus=nexus,
+    )
+
+
+def compute_invoice_tax(
+    *,
+    invoice: Mapping[str, Any],
+    default_rate: str | None,
+    rate_override: Decimal | None = None,
+    workspace: WorkspaceTax | None = None,
+) -> TaxResult:
+    return compute_lines_tax(
+        lines_in=list(invoice.get("lines") or []),
+        state=shipping_state(invoice),
+        default_rate=default_rate,
+        workspace=workspace,
+        rate_override=rate_override,
+    )
+
+
+def compute_credit_memo_tax(
+    *, memo: Mapping[str, Any], state: str | None, default_rate: str | None, workspace: WorkspaceTax | None
+) -> TaxResult:
+    """A credit memo has no ship-to address; the caller resolves the state from its client."""
+    return compute_lines_tax(
+        lines_in=list(memo.get("lines") or []),
+        state=state,
+        default_rate=default_rate,
+        workspace=workspace,
+        rate_override=None,
     )
 
 
@@ -157,6 +233,28 @@ def lines_payload(*, invoice: Mapping[str, Any], result: TaxResult) -> list[dict
         item["tax_description"] = result.description
         payload.append(item)
     return payload
+
+
+def credit_memo_lines_payload(*, memo: Mapping[str, Any], result: TaxResult) -> list[dict[str, Any]]:
+    payload: list[dict[str, Any]] = []
+    for line, computed in zip(memo.get("lines") or [], result.lines, strict=True):
+        item: dict[str, Any] = {field: line[field] for field in WRITABLE_CREDIT_MEMO_LINE_FIELDS if field in line}
+        item.update({key: value for key, value in line.items() if key.startswith("custom_field_")})
+        item["tags"] = [{"id": tag["id"]} if isinstance(tag, dict) else tag for tag in line.get("tags") or []]
+        item["tax"] = str(computed.tax)
+        item["tax_description"] = result.description
+        payload.append(item)
+    return payload
+
+
+def vendor_address(vendor: Mapping[str, Any]) -> str:
+    """Campfire's vendor record keeps the address in pieces; join them so the state parser can read it."""
+    parts: list[str] = [
+        str(vendor.get(key) or "")
+        for key in ("address_street_1", "address_street_2", "city", "state", "zip_code", "country")
+    ]
+    city_state: str = ", ".join(part for part in (parts[2], f"{parts[3]} {parts[4]}".strip()) if part)
+    return "\n".join(part for part in (parts[0], parts[1], city_state, parts[5]) if part)
 
 
 def is_self_echo(changed_fields: Iterable[str]) -> bool:

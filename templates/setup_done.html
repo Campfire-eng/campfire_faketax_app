@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}FakeTax setup{% endblock %}
+{% block body %}
+<h1><span>Fake</span>Tax is set up · workspace {{ customer_id }}</h1>
+{% include "_steps.html" %}
+<div class="card">
+  <p><strong>Nexus:</strong> {% if workspace.nexus %}{{ workspace.nexus|join(", ") }}{% else %}none yet, so no invoice gets tax until you add one{% endif %}</p>
+  <p><strong>Tax code field:</strong> {% if workspace.tax_code_field %}<code>{{ workspace.tax_code_field }}</code> on invoice and credit memo lines{% else %}not created{% endif %}</p>
+  <p><strong>Default tax code:</strong> {{ workspace.default_tax_code }}</p>
+</div>
+<p class="muted">Rates, nexus and overrides live on the manage screen, which Campfire opens from the connection page.</p>
+<div class="actions">
+  <a class="button" href="{{ return_to }}">Return to Campfire</a>
+  <a class="muted" href="{{ url_for('manage_workspace', customer_id=customer_id) }}">Open the manage screen</a>
+</div>
+{% endblock %}

@@ -95,7 +95,7 @@ def test_bulk_counts_refusals_and_drafts(app_module: ModuleType, monkeypatch: py
 
 def test_unknown_rate_opens_breakdown_frame_whose_token_still_works(app_module: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
     app_module.store.save_install_config(customer_id=CUSTOMER_ID, config={"default_rate": ""})
-    monkeypatch.setattr(app_module.campfire, "get_invoice", lambda **kw: _invoice(invoice_id=kw["invoice_id"], address="Portland, OR 97201"))
+    monkeypatch.setattr(app_module.campfire, "get_invoice", lambda **kw: _invoice(invoice_id=kw["invoice_id"], address="Boise, ID 83702"))
     client = app_module.app.test_client()
     payload = _slot_payload(object_ids=["11"])
 
@@ -163,3 +163,71 @@ def test_settings_panel_reads_and_saves_install_config(app_module: ModuleType, m
 
     record_token = _token(object_ids=["12"], surface="panel:detail")
     assert client.post("/frame/api/settings", json={"context_token": record_token}).status_code == 403
+
+
+def _authorize_browser(client: Any, customer_id: int = CUSTOMER_ID) -> None:
+    with client.session_transaction() as browser:
+        browser["workspaces"] = [customer_id]
+        browser["return_to"] = "http://localhost:3000/v2/settings/connections/apps/abc"
+
+
+def test_onboarding_sets_nexus_creates_the_line_field_and_returns_to_campfire(app_module: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    created: list[dict[str, Any]] = []
+    monkeypatch.setattr(app_module.campfire, "create_custom_field", lambda **kw: created.append(kw) or {"id": 5, "name": kw["name"]})
+    client = app_module.app.test_client()
+    _authorize_browser(client)
+
+    step1 = client.post(f"/setup/{CUSTOMER_ID}", data={"nexus": ["CA", "TX"], "default_tax_code": "SERVICE"})
+    step2 = client.post(f"/setup/{CUSTOMER_ID}/field")
+    done = client.get(f"/setup/{CUSTOMER_ID}/done")
+
+    assert step1.status_code == 302 and step1.headers["Location"].endswith(f"/setup/{CUSTOMER_ID}/field")
+    assert step2.status_code == 302 and step2.headers["Location"].endswith(f"/setup/{CUSTOMER_ID}/done")
+    assert [c["model"] for c in created] == ["accountinginvoiceline", "accountingcreditmemoline"]
+    assert created[0]["options"] == ["TAXABLE", "SAAS", "SERVICE", "EXEMPT"]
+    workspace = app_module.store.workspace(customer_id=CUSTOMER_ID)
+    assert workspace.nexus == ["CA", "TX"] and workspace.default_tax_code == "SERVICE"
+    assert workspace.tax_code_field == "tax_code" and workspace.onboarded_at is not None
+    assert done.status_code == 200 and b"/v2/settings/connections/apps/abc" in done.data
+
+
+def test_setup_refuses_a_browser_that_never_authorized_the_workspace(app_module: ModuleType) -> None:
+    assert app_module.app.test_client().get(f"/setup/{CUSTOMER_ID}").status_code == 403
+
+
+def test_manage_link_opens_the_workspace_once_and_saves_overrides(app_module: ModuleType) -> None:
+    client = app_module.app.test_client()
+    token = _token(object_ids=[], surface="manage")
+
+    entry = client.get(f"/manage?cf_ctx={token}")
+    page = client.get(f"/manage/{CUSTOMER_ID}")
+    saved = client.post(
+        f"/manage/{CUSTOMER_ID}",
+        data={"nexus": ["NY"], "override_NY": "8.875", "default_tax_code": "TAXABLE"},
+    )
+    replay = client.get(f"/manage?cf_ctx={token}")
+
+    assert entry.status_code == 302 and entry.headers["Location"].endswith(f"/manage/{CUSTOMER_ID}")
+    assert page.status_code == 200 and b"New York" in page.data
+    assert saved.status_code == 200 and b"Saved." in saved.data
+    workspace = app_module.store.workspace(customer_id=CUSTOMER_ID)
+    assert workspace.nexus == ["NY"] and workspace.overrides == {"NY": "8.875"}
+    assert replay.status_code == 401
+
+
+def test_manage_refuses_a_button_token(app_module: ModuleType) -> None:
+    response = app_module.app.test_client().get(f"/manage?cf_ctx={_token(object_ids=['11'])}")
+
+    assert response.status_code == 403
+
+
+def test_credit_memo_event_taxes_lines_by_the_clients_state(app_module: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    app_module.store.save_workspace(customer_id=CUSTOMER_ID, nexus=["CA"], onboarded=True)
+    writes: list[dict[str, Any]] = []
+    monkeypatch.setattr(app_module.campfire, "get_credit_memo", lambda **kw: {"id": kw["memo_id"], "client": 77, "lines": [{"id": 1, "amount": "40.00", "tax": "0", "account": 3, "tags": []}]})
+    monkeypatch.setattr(app_module.campfire, "get_vendor", lambda **kw: {"id": 77, "city": "Oakland", "state": "CA", "zip_code": "94607"})
+    monkeypatch.setattr(app_module.campfire, "write_credit_memo_tax", lambda **kw: writes.append(kw) or WriteOutcome(kind="written"))
+
+    app_module._handle_event(event={"kind": "event", "topic": "CreditMemo.created", "id": 9, "customer": {"id": CUSTOMER_ID}})
+
+    assert len(writes) == 1 and str(writes[0]["result"].lines[0].tax) == "2.90"

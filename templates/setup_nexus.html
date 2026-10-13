@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}FakeTax setup{% endblock %}
+{% block body %}
+<h1><span>Fake</span>Tax setup · workspace {{ customer_id }}</h1>
+{% include "_steps.html" %}
+<h2>Where do you collect sales tax?</h2>
+<p class="muted">Pick the states where this workspace has nexus. Invoices shipping anywhere else get no tax. You can change this later from Campfire.</p>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+<form method="post">
+  <div class="grid">
+    {% for j in jurisdictions %}
+      <label><input type="checkbox" name="nexus" value="{{ j.code }}" {% if j.code in nexus %}checked{% endif %}>
+        {{ j.name }} <span class="tag">{% if j.has_sales_tax %}{{ "%.2f"|format(j.combined_rate) }}%{% else %}no sales tax{% endif %}</span></label>
+    {% endfor %}
+  </div>
+  <p><label>Default tax code for lines without one
+    <select name="default_tax_code">
+      {% for code in tax_codes %}<option value="{{ code.code }}" {% if code.code == default_tax_code %}selected{% endif %}>{{ code.label }}</option>{% endfor %}
+    </select></label></p>
+  <div class="actions"><button type="submit">Continue</button></div>
+</form>
+{% endblock %}

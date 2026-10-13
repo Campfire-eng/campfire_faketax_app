@@ -2,7 +2,7 @@
   "app": {
     "name": "FakeTax",
     "tagline": "Made-up sales tax on invoices",
-    "description": "Demo app that exercises Campfire app slots, event subscriptions and install config. The tax is fake; the plumbing is real.",
+    "description": "Sales tax for invoices and credit memos by jurisdiction, with tax codes on lines. The tax is fake; the plumbing is real.",
     "icon_url": null,
     "redirect_uris": [
       "http://localhost:3999/callback"
@@ -10,8 +10,12 @@
     "connect_url": "http://localhost:3999/connect",
     "allowed_scopes": [
       "invoices:read",
-      "invoices:write"
-    ]
+      "invoices:write",
+      "credit_memos:write",
+      "custom_fields:write",
+      "vendors:read"
+    ],
+    "manage_url": "http://localhost:3999/manage"
   },
   "allowed_domains": [
     "localhost"
@@ -170,7 +174,9 @@
       "topics": [
         "Invoice.created",
         "Invoice.updated",
-        "Invoice.deleted"
+        "Invoice.deleted",
+        "CreditMemo.created",
+        "CreditMemo.updated"
       ],
       "endpoint_url": "http://localhost:3999/events",
       "is_active": true

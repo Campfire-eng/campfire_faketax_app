@@ -22,6 +22,12 @@
   label { display: inline-flex; gap: 6px; align-items: center; margin-right: 16px; }
   input[type=text], select { font: inherit; padding: 4px 6px; border: 1px solid var(--line); border-radius: 4px; }
   code { background: var(--soft); padding: 1px 4px; border-radius: 3px; }
+  .steps { display: flex; gap: 12px; margin: 0 0 16px; padding: 0; list-style: none; font-size: 13px; }
+  .steps li { color: var(--muted); } .steps li.current { color: var(--fg); font-weight: 600; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px 16px; margin: 12px 0; }
+  .grid label { margin: 0; } .tag { display: inline-block; font-size: 12px; padding: 1px 6px; border-radius: 10px; background: var(--soft); color: var(--muted); }
+  input.rate { width: 70px; text-align: right; }
+  .actions { display: flex; gap: 8px; align-items: center; margin-top: 16px; }
 </style>
 {% block head %}{% endblock %}
 </head>

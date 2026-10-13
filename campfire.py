@@ -8,9 +8,12 @@ from typing import Any
 import requests
 
 from store import Grant, Store
-from tax import TaxResult, lines_payload
+from tax import TaxResult, credit_memo_lines_payload, lines_payload
 
 INVOICE_PATH: str = "/coa/api/v1/invoice/{id}/"
+CREDIT_MEMO_PATH: str = "/coa/api/v1/credit-memo/{id}"
+VENDOR_PATH: str = "/coa/api/vendor/{id}"
+CUSTOM_FIELDS_PATH: str = "/ca/api/v1/custom-fields"
 INSTALL_CONFIG_PATH: str = "/ca/api/v1/oauth-app-install/config"
 
 
@@ -120,6 +123,71 @@ class Campfire:
             self.store.cache_invoice(customer_id=customer_id, invoice=r.json())
             return WriteOutcome(kind="written")
         return WriteOutcome(kind="refused", detail=_error_text(r))
+
+    def get_credit_memo(self, *, customer_id: int, memo_id: int) -> dict[str, Any] | None:
+        r = self.request(customer_id=customer_id, method="GET", path=CREDIT_MEMO_PATH.format(id=memo_id))
+        if r.status_code == 404:
+            return None
+        r.raise_for_status()
+        memo: dict[str, Any] = r.json()
+        return memo
+
+    def write_credit_memo_tax(self, *, customer_id: int, memo: dict[str, Any], result: TaxResult) -> WriteOutcome:
+        r = self.request(
+            customer_id=customer_id,
+            method="PATCH",
+            path=CREDIT_MEMO_PATH.format(id=memo["id"]),
+            json={"lines": credit_memo_lines_payload(memo=memo, result=result)},
+        )
+        if r.status_code == 202 or _is_draft_queue(r):
+            return WriteOutcome(kind="draft")
+        if 200 <= r.status_code < 300:
+            return WriteOutcome(kind="written")
+        return WriteOutcome(kind="refused", detail=_error_text(r))
+
+    def get_vendor(self, *, customer_id: int, vendor_id: int) -> dict[str, Any] | None:
+        """Credit memos name a client, which Campfire stores as a vendor record with an address."""
+        r = self.request(customer_id=customer_id, method="GET", path=VENDOR_PATH.format(id=vendor_id))
+        if r.status_code == 404:
+            return None
+        r.raise_for_status()
+        vendor: dict[str, Any] = r.json()
+        return vendor
+
+    def list_custom_fields(self, *, customer_id: int, model: str) -> list[dict[str, Any]]:
+        r = self.request(
+            customer_id=customer_id, method="GET", path=f"{CUSTOM_FIELDS_PATH}?app=chart_of_accounts&model={model}"
+        )
+        r.raise_for_status()
+        body: Any = r.json()
+        rows: Any = body.get("results", body) if isinstance(body, dict) else body
+        return list(rows or [])
+
+    def create_custom_field(
+        self, *, customer_id: int, model: str, name: str, label: str, options: list[str]
+    ) -> dict[str, Any]:
+        """A single-select field on ``model`` lines, or the existing field of that name."""
+        for field in self.list_custom_fields(customer_id=customer_id, model=model):
+            if field.get("name") == name:
+                return field
+        r = self.request(
+            customer_id=customer_id,
+            method="POST",
+            path=CUSTOM_FIELDS_PATH,
+            json={
+                "app": "chart_of_accounts",
+                "model": model,
+                "name": name,
+                "label": label,
+                "field_type": "single_select",
+                "options": options,
+                "is_required": False,
+                "is_active": True,
+            },
+        )
+        r.raise_for_status()
+        created: dict[str, Any] = r.json()
+        return created
 
     def get_install_config(self, *, access_token: str) -> dict[str, Any]:
         r = self.request_with_token(access_token=access_token, method="GET", path=INSTALL_CONFIG_PATH)

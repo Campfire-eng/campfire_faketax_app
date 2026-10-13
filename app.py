@@ -1,6 +1,7 @@
 """
-FakeTax: a demo Campfire app that puts made-up sales tax on invoices, using every app-extension
-capability (link, webhook and iframe slots, event subscriptions, install config).
+FakeTax: a demo Campfire app that puts made-up sales tax on invoices and credit memos, using every
+app-extension capability (link, webhook and iframe buttons, panels, event subscriptions, install
+config, a bespoke onboarding flow and a manage screen Campfire links into).
 """
 
 import base64
@@ -22,9 +23,18 @@ from flask import Flask, abort, jsonify, redirect, render_template, request, ses
 from flask.typing import ResponseReturnValue
 
 from campfire import Campfire, NotConnected, WriteOutcome
+from jurisdictions import DEFAULT_TAX_CODE, JURISDICTIONS, TAX_CODES
 from security import ContextTokenError, decode_context_token, token_covers, verify_context_token, verify_signature
-from store import SIMULATE_OPTIONS, Store
-from tax import TaxResult, compute_invoice_tax, is_self_echo, parse_rate
+from store import SIMULATE_OPTIONS, Store, WorkspaceTax
+from tax import (
+    TaxResult,
+    compute_credit_memo_tax,
+    compute_invoice_tax,
+    is_self_echo,
+    parse_rate,
+    state_from_address,
+    vendor_address,
+)
 
 load_dotenv()
 
@@ -42,6 +52,8 @@ DEFAULT_INSTALL_CONFIG: dict[str, str] = {"default_rate": "5.00", "auto_calculat
 MAX_BULK: int = 50
 SLOW_SECONDS: int = 12
 TAXABLE_STATUSES: frozenset[str] = frozenset({"draft", "open"})
+TAX_CODE_FIELD: str = "tax_code"
+TAX_CODE_MODELS: tuple[str, ...] = ("accountinginvoiceline", "accountingcreditmemoline")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log: logging.Logger = logging.getLogger("faketax")
@@ -81,7 +93,10 @@ def calculate_invoice(
     if only_if_changed and invoice.get("payment_status") not in TAXABLE_STATUSES:
         return InvoiceOutcome(invoice_id=invoice_id, kind="skipped", detail="not draft or open")
     result: TaxResult = compute_invoice_tax(
-        invoice=invoice, default_rate=_default_rate(customer_id=customer_id), rate_override=rate_override
+        invoice=invoice,
+        default_rate=_default_rate(customer_id=customer_id),
+        rate_override=rate_override,
+        workspace=store.workspace(customer_id=customer_id),
     )
     if result.needs_rate:
         return InvoiceOutcome(invoice_id=invoice_id, kind="needs_rate")
@@ -91,6 +106,31 @@ def calculate_invoice(
         return InvoiceOutcome(invoice_id=invoice_id, kind="unchanged")
     outcome: WriteOutcome = campfire.write_tax(customer_id=customer_id, invoice=invoice, result=result)
     return InvoiceOutcome(invoice_id=invoice_id, kind=outcome.kind, detail=outcome.detail, tax=result.total_tax)
+
+
+def calculate_credit_memo(*, customer_id: int, memo_id: int) -> InvoiceOutcome:
+    """Credit memos carry no ship-to address, so the client's address decides the jurisdiction."""
+    memo: dict[str, Any] | None = campfire.get_credit_memo(customer_id=customer_id, memo_id=memo_id)
+    if memo is None:
+        return InvoiceOutcome(invoice_id=memo_id, kind="missing")
+    state: str | None = None
+    if memo.get("client"):
+        vendor: dict[str, Any] | None = campfire.get_vendor(customer_id=customer_id, vendor_id=int(memo["client"]))
+        state = state_from_address(vendor_address(vendor)) if vendor else None
+    result: TaxResult = compute_credit_memo_tax(
+        memo=memo,
+        state=state,
+        default_rate=_default_rate(customer_id=customer_id),
+        workspace=store.workspace(customer_id=customer_id),
+    )
+    if result.needs_rate:
+        return InvoiceOutcome(invoice_id=memo_id, kind="needs_rate")
+    if not result.lines:
+        return InvoiceOutcome(invoice_id=memo_id, kind="skipped", detail="no lines")
+    if result.already_applied:
+        return InvoiceOutcome(invoice_id=memo_id, kind="unchanged")
+    outcome: WriteOutcome = campfire.write_credit_memo_tax(customer_id=customer_id, memo=memo, result=result)
+    return InvoiceOutcome(invoice_id=memo_id, kind=outcome.kind, detail=outcome.detail, tax=result.total_tax)
 
 
 def summarize(*, outcomes: list[InvoiceOutcome]) -> tuple[str, str]:
@@ -186,11 +226,19 @@ def home() -> ResponseReturnValue:
     )
 
 
+def _campfire_return_url(candidate: str | None) -> str | None:
+    """Only Campfire's own origin may be a return target; anything else is dropped."""
+    if candidate and candidate.startswith(CAMPFIRE_FRONTEND_ORIGIN + "/"):
+        return candidate
+    return None
+
+
 @app.get("/connect")
 def connect() -> ResponseReturnValue:
     verifier, challenge = _pkce_pair()
     state: str = secrets.token_urlsafe(24)
     session["oauth"] = {"state": state, "verifier": verifier}
+    session["return_to"] = _campfire_return_url(request.args.get("return_to"))
     query: dict[str, str] = {
         "client_id": CLIENT_ID,
         "redirect_uri": REDIRECT_URI,
@@ -219,7 +267,149 @@ def callback() -> ResponseReturnValue:
     store.save_tokens(customer_id=customer_id, tokens=tokens)
     config: dict[str, str] = {**DEFAULT_INSTALL_CONFIG, **(current.get("install_config") or {}), "base_url": PUBLIC_BASE_URL}
     campfire.put_install_config(customer_id=customer_id, config=config)
-    return redirect(url_for("home"))
+    _remember_workspace(customer_id)
+    workspace: WorkspaceTax | None = store.workspace(customer_id=customer_id)
+    if workspace is None or workspace.onboarded_at is None:
+        return redirect(url_for("setup_nexus", customer_id=customer_id))
+    return redirect(session.get("return_to") or url_for("home"))
+
+
+def _remember_workspace(customer_id: int) -> None:
+    """This browser proved it may act for the workspace, by authorizing or by arriving with a token."""
+    allowed: list[int] = [int(i) for i in session.get("workspaces", [])]
+    if customer_id not in allowed:
+        allowed.append(customer_id)
+    session["workspaces"] = allowed
+
+
+def _require_workspace(customer_id: int) -> None:
+    if customer_id not in [int(i) for i in session.get("workspaces", [])]:
+        abort(403, "open this workspace from Campfire first")
+
+
+def _nexus_from_form() -> list[str]:
+    return [code for code in JURISDICTIONS if code in request.form.getlist("nexus")]
+
+
+def _tax_code_from_form() -> str:
+    value: str = request.form.get("default_tax_code", DEFAULT_TAX_CODE)
+    return value if value in TAX_CODES else DEFAULT_TAX_CODE
+
+
+@app.route("/setup/<int:customer_id>", methods=["GET", "POST"])
+def setup_nexus(customer_id: int) -> ResponseReturnValue:
+    _require_workspace(customer_id)
+    workspace: WorkspaceTax | None = store.workspace(customer_id=customer_id)
+    if request.method == "POST":
+        store.save_workspace(customer_id=customer_id, nexus=_nexus_from_form(), default_tax_code=_tax_code_from_form())
+        return redirect(url_for("setup_field", customer_id=customer_id))
+    return render_template(
+        "setup_nexus.html",
+        step=1,
+        customer_id=customer_id,
+        jurisdictions=list(JURISDICTIONS.values()),
+        nexus=workspace.nexus if workspace else [],
+        tax_codes=list(TAX_CODES.values()),
+        default_tax_code=workspace.default_tax_code if workspace else DEFAULT_TAX_CODE,
+    )
+
+
+@app.route("/setup/<int:customer_id>/field", methods=["GET", "POST"])
+def setup_field(customer_id: int) -> ResponseReturnValue:
+    _require_workspace(customer_id)
+    workspace: WorkspaceTax = store.workspace(customer_id=customer_id) or store.save_workspace(customer_id=customer_id)
+    error: str | None = None
+    if request.method == "POST":
+        try:
+            for model in TAX_CODE_MODELS:
+                campfire.create_custom_field(
+                    customer_id=customer_id,
+                    model=model,
+                    name=TAX_CODE_FIELD,
+                    label="Tax code",
+                    options=[code.code for code in TAX_CODES.values()],
+                )
+            store.save_workspace(customer_id=customer_id, tax_code_field=TAX_CODE_FIELD)
+            return redirect(url_for("setup_done", customer_id=customer_id))
+        except (NotConnected, requests.RequestException) as e:
+            error = f"Campfire refused the custom field: {e}"
+    return render_template(
+        "setup_field.html",
+        step=2,
+        customer_id=customer_id,
+        tax_codes=list(TAX_CODES.values()),
+        default_label=TAX_CODES[workspace.default_tax_code].label,
+        error=error,
+    )
+
+
+@app.get("/setup/<int:customer_id>/done")
+def setup_done(customer_id: int) -> ResponseReturnValue:
+    _require_workspace(customer_id)
+    workspace: WorkspaceTax = store.save_workspace(customer_id=customer_id, onboarded=True)
+    return render_template(
+        "setup_done.html",
+        step=3,
+        customer_id=customer_id,
+        workspace=workspace,
+        return_to=session.get("return_to") or f"{CAMPFIRE_FRONTEND_ORIGIN}/v2/settings/connections",
+    )
+
+
+@app.get("/manage")
+def manage_entry() -> ResponseReturnValue:
+    """Campfire's "Manage in FakeTax" link: a single-use token names the person and workspace."""
+    try:
+        claims: dict[str, Any] = verify_context_token(
+            token=request.args.get("cf_ctx", ""), secrets=SIGNING_SECRETS, client_id=CLIENT_ID, claim_jti=store.claim_jti
+        )
+    except ContextTokenError as e:
+        return render_template("message.html", title="Link expired", message=f"Open FakeTax from Campfire again ({e})."), 401
+    if claims.get("surface") != "manage":
+        return render_template("message.html", title="Wrong link", message="This token is not a manage link."), 403
+    customer_id: int = int(claims["customer_id"])
+    _remember_workspace(customer_id)
+    session["manage_claims"] = {"user_id": claims.get("user_id"), "customer_id": customer_id}
+    return redirect(url_for("manage_workspace", customer_id=customer_id))
+
+
+@app.route("/manage/<int:customer_id>", methods=["GET", "POST"])
+def manage_workspace(customer_id: int) -> ResponseReturnValue:
+    _require_workspace(customer_id)
+    error: str | None = None
+    notice: str | None = None
+    if request.method == "POST":
+        overrides: dict[str, str] = {}
+        for code in JURISDICTIONS:
+            raw: str = request.form.get(f"override_{code}", "").strip()
+            if raw and parse_rate(raw) is None:
+                error = f"{code}: an override must be a number between 0 and 100."
+                break
+            if raw:
+                overrides[code] = raw
+        if error is None:
+            store.save_workspace(
+                customer_id=customer_id,
+                nexus=_nexus_from_form(),
+                overrides=overrides,
+                default_tax_code=_tax_code_from_form(),
+            )
+            notice = "Saved."
+    workspace: WorkspaceTax = store.workspace(customer_id=customer_id) or store.save_workspace(customer_id=customer_id)
+    grant = store.grant(customer_id=customer_id)
+    claims: dict[str, Any] | None = session.get("manage_claims")
+    return render_template(
+        "manage.html",
+        customer_id=customer_id,
+        workspace=workspace,
+        jurisdictions=list(JURISDICTIONS.values()),
+        tax_codes=list(TAX_CODES.values()),
+        install_config=grant.install_config if grant else {},
+        cached=store.cached_invoice_count(customer_id=customer_id),
+        claims=claims if claims and claims.get("customer_id") == customer_id else None,
+        error=error,
+        notice=notice,
+    )
 
 
 @app.get("/refresh/<int:customer_id>")
@@ -316,7 +506,9 @@ def report(invoice_id: int) -> ResponseReturnValue:
         return render_template("message.html", title="Not connected", message="Connect FakeTax to this workspace first."), 403
     if invoice is None:
         return render_template("message.html", title="Not found", message="Campfire has no such invoice."), 404
-    result: TaxResult = compute_invoice_tax(invoice=invoice, default_rate=_default_rate(customer_id=customer_id))
+    result: TaxResult = compute_invoice_tax(
+        invoice=invoice, default_rate=_default_rate(customer_id=customer_id), workspace=store.workspace(customer_id=customer_id)
+    )
     return render_template("report.html", invoice=invoice, result=result, claims=claims)
 
 
@@ -340,7 +532,9 @@ def frame_api_breakdown() -> ResponseReturnValue:
     invoice: dict[str, Any] | None = campfire.get_invoice(customer_id=customer_id, invoice_id=invoice_id)
     if invoice is None:
         return jsonify({"error": "not found"}), 404
-    result: TaxResult = compute_invoice_tax(invoice=invoice, default_rate=_default_rate(customer_id=customer_id))
+    result: TaxResult = compute_invoice_tax(
+        invoice=invoice, default_rate=_default_rate(customer_id=customer_id), workspace=store.workspace(customer_id=customer_id)
+    )
     return jsonify(
         {
             "invoice_number": invoice.get("invoice_number"),
@@ -349,8 +543,15 @@ def frame_api_breakdown() -> ResponseReturnValue:
             "shipping_address": invoice.get("shipping_address") or "",
             "state": result.state,
             "rate": str(result.rate) if result.rate is not None else None,
+            "nexus": result.nexus,
             "lines": [
-                {"description": line.description, "base": str(line.base), "current_tax": str(line.current_tax)}
+                {
+                    "description": line.description,
+                    "base": str(line.base),
+                    "current_tax": str(line.current_tax),
+                    "tax_code": line.tax_code,
+                    "taxable": line.taxable,
+                }
                 for line in result.lines
             ],
         }
@@ -424,15 +625,19 @@ def _handle_event(*, event: dict[str, Any]) -> None:
         if topic == "Invoice.deleted":
             store.forget_invoice(customer_id=customer_id, invoice_id=invoice_id)
             return
-        if topic not in ("Invoice.created", "Invoice.updated"):
+        if topic not in ("Invoice.created", "Invoice.updated", "CreditMemo.created", "CreditMemo.updated"):
             return
         grant = store.grant(customer_id=customer_id)
         if grant is None or grant.install_config.get("auto_calculate") != "true":
             return
-        if topic == "Invoice.updated" and is_self_echo(event.get("changed_fields") or []):
+        if topic.endswith(".updated") and is_self_echo(event.get("changed_fields") or []):
             log.info("event %s %s: only tax fields changed, skipping", topic, invoice_id)
             return
-        outcome: InvoiceOutcome = calculate_invoice(customer_id=customer_id, invoice_id=invoice_id, only_if_changed=True)
+        outcome: InvoiceOutcome = (
+            calculate_credit_memo(customer_id=customer_id, memo_id=invoice_id)
+            if topic.startswith("CreditMemo.")
+            else calculate_invoice(customer_id=customer_id, invoice_id=invoice_id, only_if_changed=True)
+        )
         log.info("event %s %s: %s %s", topic, invoice_id, outcome.kind, outcome.detail)
     except (NotConnected, requests.RequestException) as e:
         log.warning("event %s %s failed: %s", topic, invoice_id, e)

@@ -4,10 +4,16 @@ A demo Campfire OAuth app that puts made-up sales tax on invoices. It exists to 
 app-extension capability: link, webhook and iframe buttons, embedded panels, event subscriptions
 and install config. The tax is fake; the plumbing is real.
 
-Tax rule: the rate comes from the invoice's shipping state (CA 7.25, NY 8.00, TX 6.25, WA 6.50),
-otherwise the workspace's `default_rate` install config (5.00 unless changed). Per line,
+Tax rule: the invoice's shipping state (or, for a credit memo, the client's address) picks a
+jurisdiction from `jurisdictions.py`, seventeen US states with a state rate, an average local
+add-on and whether the state taxes services and SaaS. A workspace only collects where it has
+**nexus**, chosen during onboarding and editable on the manage screen, which can also override
+any state's combined rate. Each line carries a **tax code** in a Campfire custom field
+(`TAXABLE`, `SAAS`, `SERVICE`, `EXEMPT`) that decides whether that line is taxed in that state.
+Unknown states fall back to the workspace's `default_rate` install config. Per line,
 `tax = (amount - discount) * rate / 100`, rounded half-up to cents, with
-`tax_description = "FakeTax CA 7.25%"`.
+`tax_description = "FakeTax CA 7.25%"` (or `FakeTax NY no nexus`, `FakeTax OR no sales tax`).
+Until a workspace finishes onboarding FakeTax taxes everywhere, so the demo works out of the box.
 
 ## Setup
 
@@ -35,10 +41,18 @@ otherwise the workspace's `default_rate` install config (5.00 unless changed). P
 
    Flask listens on 0.0.0.0 because Campfire calls the webhooks from inside Docker, where it
    rewrites `localhost` to `host.docker.internal`.
-7. **Connect**: open http://localhost:3999 and click Connect (or Connect from the app's
-   connection page in Campfire). After the callback FakeTax asks Campfire which workspace the
-   token belongs to (`GET /ca/api/v1/oauth-app-install/config` returns `customer_id`) and writes
-   its install config: `{default_rate: "5.00", auto_calculate: "false", base_url: "http://localhost:3999"}`.
+7. **Connect**: click Connect on the app's connection page in Campfire (or at
+   http://localhost:3999). After the callback FakeTax asks Campfire which workspace the token
+   belongs to (`GET /ca/api/v1/oauth-app-install/config` returns `customer_id`), writes its
+   install config, and sends a new workspace through **onboarding**: pick the states with nexus
+   and a default tax code, then let FakeTax create the `Tax code` custom field on invoice lines
+   and credit memo lines (`POST /ca/api/v1/custom-fields`, scope `custom_fields:write`). The last
+   step returns you to Campfire: the Connect button carries `return_to`, which FakeTax only honours
+   for Campfire's own origin.
+8. **Manage**: the connection page in Campfire shows **Manage in FakeTax**. It asks Campfire for
+   a signed link (`POST /ca/api/v1/oauth-apps/connections/<id>/manage-link`), whose `cf_ctx`
+   token has `surface: "manage"` and no record. FakeTax verifies it once and opens the workspace's
+   jurisdiction table: nexus, state and local rates, your overrides, and the tax codes.
 
 If you rotate the signing secret again, Campfire signs with both secrets for 24 hours. Put the new
 one in `SIGNING_SECRET` (and optionally the old one in `SIGNING_SECRET_PREVIOUS`) and restart.
@@ -65,7 +79,8 @@ one in `SIGNING_SECRET` (and optionally the old one in `SIGNING_SECRET_PREVIOUS`
 7. **Auto-calculate**: tick it on FakeTax's home page and Save (this PUTs install config to
    Campfire). Create a new invoice in Campfire: the `Invoice.created` event arrives at `/events`
    and FakeTax writes tax a moment later. Reload the invoice to see it.
-8. **No rate**: clear the default rate, then Calculate tax on an invoice shipping to, say, Oregon.
+8. **No rate**: clear the default rate, then Calculate tax on an invoice shipping to a state FakeTax
+    has no table for, say Idaho.
    The webhook replies with an `open_iframe` effect and the breakdown drawer opens to pick a rate.
 9. **Simulate failure**: set it to `500` and click Calculate tax: Campfire shows "FakeTax could not
    complete this action". Set `slow` (12s sleep, past the 8s timeout): "did not respond in time".
@@ -90,6 +105,9 @@ one in `SIGNING_SECRET` (and optionally the old one in `SIGNING_SECRET_PREVIOUS`
 | Panel, list page | `settings` | `GET /frame/settings`, `POST /frame/api/settings[/save]` | A token with no record; settings written to install config from inside Campfire |
 | Event subscription | `event_subscriptions` | `POST /events` | Signed thin events; FakeTax re-reads the invoice with its own token |
 | Install config | (none) | `GET/PUT /ca/api/v1/oauth-app-install/config` | Per-workspace `default_rate`, `auto_calculate`, `base_url` set by the app's own token |
+| Onboarding | `connect_url` + `return_to` | `/setup/<workspace>` (3 steps) | Nexus, default tax code, custom field creation with the app token, return to Campfire |
+| Manage link | `manage_url` | `GET /manage?cf_ctx=`, `/manage/<workspace>` | Signed entry from the connection page; single-use token, then a browser session |
+| Credit memos | `event_subscriptions` | `POST /events` → `GET/PATCH /coa/api/v1/credit-memo/<id>` | Client address (`GET /coa/api/vendor/<id>`, scope `vendors:read`) picks the jurisdiction |
 | OAuth connect + refresh | app settings | `/connect`, `/callback`, `/refresh/<id>` | PKCE, refresh on expiry or 401, grant dropped when refresh is refused |
 
 ## Invoice API used (and why it works with an app token)
@@ -140,10 +158,11 @@ one in `SIGNING_SECRET` (and optionally the old one in `SIGNING_SECRET_PREVIOUS`
 |---|---|
 | `app.py` | Flask routes |
 | `campfire.py` | Campfire API client: token exchange, refresh, invoice read/write, install config |
-| `tax.py` | Pure tax rules, state parsing, PATCH payload, event loop guard |
+| `jurisdictions.py` | Seeded states, rates, taxability rules and tax codes |
+| `tax.py` | Pure tax rules: nexus, overrides, tax codes, state parsing, PATCH payloads, event loop guard |
 | `security.py` | Signature and context-token verification |
-| `store.py` | SQLite: grants, seen jti, frame sessions, settings, cached invoices |
+| `store.py` | SQLite: grants, per-workspace tax setup, seen jti, frame sessions, settings, cached invoices |
 | `static/app-bridge.js` | The iframe side of the Campfire bridge |
-| `templates/` | Home, report, breakdown and settings pages |
+| `templates/` | Home, report, breakdown, settings, onboarding and manage pages |
 | `manifest.json` | The whole app: details, scopes, allowed domain, buttons, panels, events. Paste into the Manifest tab |
 | `tests/` | pytest |

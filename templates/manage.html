@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}FakeTax · workspace {{ customer_id }}{% endblock %}
+{% block body %}
+<h1><span>Fake</span>Tax · workspace {{ customer_id }}</h1>
+<p class="muted">Jurisdictions, rates and tax codes for this Campfire workspace.{% if claims %} Opened by user {{ claims.user_id }} from Campfire.{% endif %}</p>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+{% if notice %}<p class="notice">{{ notice }}</p>{% endif %}
+<form method="post">
+  <h2>Jurisdictions</h2>
+  <table>
+    <thead><tr><th>Nexus</th><th>State</th><th class="num">State rate</th><th class="num">Avg. local</th><th class="num">Combined</th><th class="num">Your override</th><th>Services</th><th>SaaS</th></tr></thead>
+    <tbody>
+    {% for j in jurisdictions %}
+      <tr>
+        <td><input type="checkbox" name="nexus" value="{{ j.code }}" {% if j.code in workspace.nexus %}checked{% endif %}></td>
+        <td>{{ j.name }} <span class="muted">{{ j.code }}</span></td>
+        <td class="num">{{ "%.3f"|format(j.state_rate) }}%</td>
+        <td class="num">{{ "%.2f"|format(j.local_rate) }}%</td>
+        <td class="num">{% if j.has_sales_tax %}{{ "%.3f"|format(j.combined_rate) }}%{% else %}<span class="tag">none</span>{% endif %}</td>
+        <td class="num"><input class="rate" type="text" inputmode="decimal" name="override_{{ j.code }}" value="{{ workspace.overrides.get(j.code, '') }}" placeholder="—"></td>
+        <td>{{ "yes" if j.taxes_services else "no" }}</td>
+        <td>{{ "yes" if j.taxes_saas else "no" }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <h2>Tax codes</h2>
+  <table>
+    <thead><tr><th>Code</th><th>Meaning</th></tr></thead>
+    <tbody>{% for code in tax_codes %}<tr><td><code>{{ code.code }}</code> {{ code.label }}</td><td class="muted">{{ code.description }}</td></tr>{% endfor %}</tbody>
+  </table>
+  <p><label>Default tax code
+    <select name="default_tax_code">
+      {% for code in tax_codes %}<option value="{{ code.code }}" {% if code.code == workspace.default_tax_code %}selected{% endif %}>{{ code.label }}</option>{% endfor %}
+    </select></label>
+    <span class="muted">Line field in Campfire: {% if workspace.tax_code_field %}<code>custom_field_{{ workspace.tax_code_field }}</code>{% else %}not created · <a href="{{ url_for('setup_field', customer_id=customer_id) }}">create it</a>{% endif %}</span></p>
+  <div class="actions">
+    <button type="submit">Save</button>
+    <span class="muted">{{ cached }} invoices seen · install config <code>{{ install_config | tojson }}</code></span>
+  </div>
+</form>
+{% endblock %}
