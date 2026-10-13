@@ -57,7 +57,10 @@
       const self = this;
       window.addEventListener("load", function () { self.resize(); });
       window.addEventListener("resize", function () { self.resize(); });
-      if (window.ResizeObserver) new ResizeObserver(function () { self.resize(); }).observe(document.body);
+      const observe = function () {
+        if (window.ResizeObserver && document.body) new ResizeObserver(function () { self.resize(); }).observe(document.body);
+      };
+      if (document.body) observe(); else document.addEventListener("DOMContentLoaded", observe);
     },
     close: function () { post("close"); },
     openUrl: function (url) { post("open_url", { url: url }); },
