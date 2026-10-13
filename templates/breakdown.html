@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block head %}
+<script src="{{ url_for('static', filename='app-bridge.js') }}" data-host-origin="{{ host_origin }}"></script>
+<style> main { margin: 16px auto; } #rate { width: 80px; } </style>
+{% endblock %}
+{% block body %}
+<h1><span>Fake</span>Tax breakdown</h1>
+<p id="status" class="muted">Waiting for Campfire…</p>
+<div id="content" hidden>
+  <p id="address" class="muted"></p>
+  <p><label>Rate % <input type="text" id="rate" inputmode="decimal"></label> <span id="rate-note" class="muted"></span></p>
+  <table>
+    <thead><tr><th>Line</th><th class="num">Taxable</th><th class="num">Current tax</th><th class="num">FakeTax</th></tr></thead>
+    <tbody id="lines"></tbody>
+    <tfoot><tr><th>Total</th><th></th><th></th><th class="num" id="total"></th></tr></tfoot>
+  </table>
+  <button id="apply">Apply to invoice</button>
+  <button id="cancel" class="secondary">Cancel</button>
+</div>
+<script>
+(function () {
+  const invoiceId = {{ invoice_id }};
+  const $ = (id) => document.getElementById(id);
+  let ctx = null;
+  let data = null;
+
+  function cents(n) { return (Math.round(n * 100) / 100).toFixed(2); }
+  function lineTax(base, rate) { return Math.sign(base) * Math.round(Math.abs(base) * rate) / 100; }
+
+  function api(path, extra) {
+    return fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(Object.assign({ context_token: ctx.context_token, invoice_id: invoiceId }, extra || {})),
+    }).then((r) => r.json().then((body) => ({ ok: r.ok, body: body })));
+  }
+
+  function render() {
+    const rate = parseFloat($("rate").value);
+    const tbody = $("lines");
+    tbody.textContent = "";
+    let total = 0;
+    data.lines.forEach((line) => {
+      const base = parseFloat(line.base);
+      const tax = isNaN(rate) ? 0 : lineTax(base, rate);
+      total += tax;
+      const tr = document.createElement("tr");
+      [line.description, cents(base), cents(parseFloat(line.current_tax)), isNaN(rate) ? "-" : cents(tax)].forEach((text, i) => {
+        const td = document.createElement("td");
+        td.textContent = text;
+        if (i > 0) td.className = "num";
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    $("total").textContent = isNaN(rate) ? "-" : cents(total) + " " + (data.currency || "");
+    $("apply").disabled = isNaN(rate);
+    CampfireBridge.resize(document.body.scrollHeight);
+  }
+
+  CampfireBridge.ready()
+    .then((context) => {
+      ctx = context;
+      return api("/frame/api/breakdown");
+    })
+    .then((res) => {
+      if (!res.ok) throw new Error(res.body.error || "FakeTax could not load this invoice");
+      data = res.body;
+      $("status").textContent = "Invoice " + data.invoice_number + " · " + data.payment_status;
+      $("address").textContent = "Ship to: " + (data.shipping_address || "(none)") + " · state " + (data.state || "unknown");
+      $("rate").value = data.rate || "";
+      $("rate-note").textContent = data.rate ? "from FakeTax's table or default; override if you like" : "no rate for this address: enter one";
+      $("content").hidden = false;
+      render();
+    })
+    .catch((e) => { $("status").textContent = e.message; $("status").className = "error"; });
+
+  $("rate").addEventListener("input", render);
+  $("cancel").addEventListener("click", () => CampfireBridge.close());
+  $("apply").addEventListener("click", () => {
+    $("apply").disabled = true;
+    api("/frame/api/apply", { rate: $("rate").value }).then((res) => {
+      CampfireBridge.toast(res.body.level || (res.ok ? "success" : "error"), res.body.message || "FakeTax failed");
+      if (res.body.ok) {
+        CampfireBridge.refresh();
+        CampfireBridge.close();
+      } else {
+        $("apply").disabled = false;
+      }
+    });
+  });
+})();
+</script>
+{% endblock %}

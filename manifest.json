@@ -1,0 +1,87 @@
+{
+  "allowed_domains": ["localhost"],
+  "slots": [
+    {
+      "key": "view",
+      "label": "View in FakeTax",
+      "icon": "external-link",
+      "object_type": "invoice",
+      "surface": "detail_header",
+      "requested_variant": "menu",
+      "action_type": "link",
+      "action_config": {"url_template": "http://localhost:3999/report/{{record.id}}"},
+      "required_scopes": ["invoices:read"],
+      "visible_when": [],
+      "confirm_text": "",
+      "order": 2,
+      "is_active": true
+    },
+    {
+      "key": "calculate",
+      "label": "Calculate tax",
+      "icon": "calculator",
+      "object_type": "invoice",
+      "surface": "detail_header",
+      "requested_variant": "secondary",
+      "action_type": "webhook",
+      "action_config": {"url_template": "http://localhost:3999/slots/calculate", "timeout_ms": 8000},
+      "required_scopes": ["invoices:read", "invoices:write"],
+      "visible_when": [{"field": "payment_status", "op": "in", "value": ["draft", "open"]}],
+      "confirm_text": "Overwrite tax on every line?",
+      "order": 0,
+      "is_active": true
+    },
+    {
+      "key": "calculate-bulk",
+      "label": "Calculate FakeTax",
+      "icon": "calculator",
+      "object_type": "invoice",
+      "surface": "list_header",
+      "requested_variant": "menu",
+      "action_type": "webhook",
+      "action_config": {"url_template": "http://localhost:3999/slots/calculate", "timeout_ms": 8000},
+      "required_scopes": ["invoices:read", "invoices:write"],
+      "visible_when": [],
+      "confirm_text": "",
+      "order": 0,
+      "is_active": true
+    },
+    {
+      "key": "open-row",
+      "label": "FakeTax report",
+      "icon": "external-link",
+      "object_type": "invoice",
+      "surface": "row_menu",
+      "requested_variant": "menu",
+      "action_type": "link",
+      "action_config": {"url_template": "http://localhost:3999/report/{{record.id}}"},
+      "required_scopes": ["invoices:read"],
+      "visible_when": [],
+      "confirm_text": "",
+      "order": 0,
+      "is_active": true
+    },
+    {
+      "key": "breakdown",
+      "label": "Tax breakdown",
+      "icon": "table",
+      "object_type": "invoice",
+      "surface": "detail_header",
+      "requested_variant": "menu",
+      "action_type": "iframe",
+      "action_config": {"url_template": "http://localhost:3999/frame/breakdown/{{record.id}}", "presentation": "drawer", "width": "lg"},
+      "required_scopes": ["invoices:read", "invoices:write"],
+      "visible_when": [],
+      "confirm_text": "",
+      "order": 1,
+      "is_active": true
+    }
+  ],
+  "event_subscriptions": [
+    {
+      "topics": ["Invoice.created", "Invoice.updated", "Invoice.deleted"],
+      "endpoint_url": "http://localhost:3999/events",
+      "is_active": true
+    }
+  ]
+}

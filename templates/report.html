@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}FakeTax - {{ invoice.invoice_number }}{% endblock %}
+{% block body %}
+<h1><span>Fake</span>Tax report · {{ invoice.invoice_number }}</h1>
+<p class="muted">Workspace {{ claims.customer_id }} · opened by user {{ claims.user_id }} from {{ claims.surface }} · status {{ invoice.payment_status }}</p>
+<p>Ship to: {{ invoice.shipping_address or "(no shipping address)" }}<br>
+  State: <strong>{{ result.state or "unknown" }}</strong> ·
+  Rate: <strong>{% if result.rate is not none %}{{ "%.2f"|format(result.rate) }}%{% else %}none (no table rate, no default){% endif %}</strong></p>
+<table>
+  <thead><tr><th>Line</th><th class="num">Taxable</th><th class="num">Tax in Campfire</th><th class="num">FakeTax</th><th></th></tr></thead>
+  <tbody>
+  {% for line in result.lines %}
+    <tr>
+      <td>{{ line.description }}</td>
+      <td class="num">{{ "{:,.2f}".format(line.base) }}</td>
+      <td class="num">{{ "{:,.2f}".format(line.current_tax) }}</td>
+      <td class="num">{{ "{:,.2f}".format(line.tax) }}</td>
+      <td>{% if line.tax == line.current_tax %}✓{% else %}differs{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+  <tfoot><tr><th>Total</th><th></th><th></th><th class="num">{{ "{:,.2f}".format(result.total_tax) }} {{ invoice.currency }}</th><th></th></tr></tfoot>
+</table>
+<p class="muted">Description written on each line: <code>{{ result.description or "-" }}</code></p>
+{% endblock %}

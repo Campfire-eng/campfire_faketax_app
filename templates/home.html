@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block body %}
+<h1><span>Fake</span>Tax</h1>
+<p class="muted">Made-up sales tax for Campfire invoices. A demo of app slots, events and install config.</p>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+{% if notice %}<p class="notice">{{ notice }}</p>{% endif %}
+{% if not signing_configured %}<p class="error">SIGNING_SECRET is not set in .env: Campfire's webhooks will be refused.</p>{% endif %}
+<p><a class="button" href="{{ url_for('connect') }}">Connect a Campfire workspace</a></p>
+
+<h2>Connected workspaces</h2>
+{% for ws in workspaces %}
+  {% set g = ws.grant %}
+  <div class="card">
+    <strong>Workspace {{ g.customer_id }}</strong>
+    <span class="muted">· token <code>{{ g.access_token[:10] }}…</code>
+      {% if ws.expires_in > 0 %}expires in {{ ws.expires_in // 60 }} min{% else %}expired (refreshes on next call){% endif %}
+      · {{ ws.cached }} invoices cached</span>
+    <form method="post" action="{{ url_for('save_settings', customer_id=g.customer_id) }}" style="margin-top:12px">
+      <label>Default rate % <input type="text" name="default_rate" size="6" value="{{ g.install_config.get('default_rate', '') }}" placeholder="blank = ask"></label>
+      <label><input type="checkbox" name="auto_calculate" {% if g.install_config.get('auto_calculate') == 'true' %}checked{% endif %}> Auto-calculate on invoice events</label>
+      <label>Simulate failure
+        <select name="simulate_failure">
+          {% for option in simulate_options %}<option value="{{ option }}" {% if option == ws.simulate_failure %}selected{% endif %}>{{ option }}</option>{% endfor %}
+        </select>
+      </label>
+      <button type="submit">Save</button>
+    </form>
+    <p class="muted" style="margin:8px 0 0">Install config in Campfire: <code>{{ g.install_config | tojson }}</code></p>
+    <p style="margin:8px 0 0"><a href="{{ url_for('refresh', customer_id=g.customer_id) }}">Refresh token</a> ·
+      <a href="{{ url_for('disconnect', customer_id=g.customer_id) }}">Forget tokens</a></p>
+  </div>
+{% else %}
+  <p class="muted">None yet.</p>
+{% endfor %}
+{% endblock %}

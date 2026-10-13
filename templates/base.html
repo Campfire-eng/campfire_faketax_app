@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}FakeTax{% endblock %}</title>
+<style>
+  :root { --fg:#1d1d1f; --muted:#6b6b70; --line:#e3e3e6; --accent:#b4461f; --bg:#fff; --soft:#f6f5f3; }
+  * { box-sizing: border-box; }
+  body { font: 15px/1.5 system-ui, -apple-system, sans-serif; color: var(--fg); background: var(--bg); margin: 0; }
+  main { max-width: 860px; margin: 32px auto; padding: 0 16px; }
+  h1 { font-size: 22px; margin: 0 0 4px; } h1 span { color: var(--accent); }
+  h2 { font-size: 17px; margin: 24px 0 8px; }
+  .muted { color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; margin: 8px 0 16px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .card { border: 1px solid var(--line); border-radius: 8px; padding: 16px; margin: 12px 0; background: var(--soft); }
+  .error { color: #b00020; } .notice { color: #1b6e3a; }
+  button, .button { background: var(--accent); color: #fff; border: 0; border-radius: 6px; padding: 7px 14px; font: inherit; cursor: pointer; text-decoration: none; display: inline-block; }
+  button.secondary { background: #fff; color: var(--fg); border: 1px solid var(--line); }
+  label { display: inline-flex; gap: 6px; align-items: center; margin-right: 16px; }
+  input[type=text], select { font: inherit; padding: 4px 6px; border: 1px solid var(--line); border-radius: 4px; }
+  code { background: var(--soft); padding: 1px 4px; border-radius: 3px; }
+</style>
+{% block head %}{% endblock %}
+</head>
+<body><main>{% block body %}{% endblock %}</main></body>
+</html>
