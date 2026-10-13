@@ -216,3 +216,16 @@ class TestCodeAssignment:
         result = compute_invoice_tax(invoice=invoice, default_rate="", workspace=_workspace(nexus=["TX"]))
 
         assert result.already_applied
+
+
+    def test_the_field_is_recognised_from_the_line_when_onboarding_did_not_record_it(self) -> None:
+        invoice = _invoice(
+            address="Austin, TX 78701",
+            lines=[{"id": 1, "amount": 100, "tax": 0, "product_name": "Platform subscription", "custom_field_tax_code": None}],
+        )
+        workspace = _workspace(nexus=["TX"], tax_code_field=None)
+
+        result = compute_invoice_tax(invoice=invoice, default_rate="", workspace=workspace)
+        payload = lines_payload(invoice=invoice, result=result, tax_code_field=workspace.tax_code_field)
+
+        assert result.lines[0].code_assigned and payload[0]["custom_field_tax_code"] == "FT-SOFT-200"

@@ -150,6 +150,19 @@ def tax_description(*, state: str | None, rate: Decimal, nexus: bool = True) -> 
     return f"FakeTax {state} {rate:.2f}%" if state else f"FakeTax {rate:.2f}%"
 
 
+TAX_CODE_FIELD: str = "tax_code"
+
+
+def tax_code_field_for(*, line: Mapping[str, Any], workspace: WorkspaceTax | None) -> str | None:
+    """
+    The custom field carrying the tax code: what onboarding recorded, or the conventional name
+    when Campfire already sends it on the line, so a workspace that skipped that step still works.
+    """
+    if workspace is not None and workspace.tax_code_field:
+        return workspace.tax_code_field
+    return TAX_CODE_FIELD if f"custom_field_{TAX_CODE_FIELD}" in line else None
+
+
 def line_tax_code(*, line: Mapping[str, Any], workspace: WorkspaceTax | None) -> tuple[str, bool]:
     """
     The line's tax code and whether FakeTax assigned it. A code on the line wins; otherwise the
@@ -157,7 +170,8 @@ def line_tax_code(*, line: Mapping[str, Any], workspace: WorkspaceTax | None) ->
     """
     if workspace is None:
         return normalize_tax_code(None), False
-    value: Any = line.get(f"custom_field_{workspace.tax_code_field}") if workspace.tax_code_field else None
+    field: str | None = tax_code_field_for(line=line, workspace=workspace)
+    value: Any = line.get(f"custom_field_{field}") if field else None
     if value:
         return normalize_tax_code(str(value)), False
     text: str = " ".join(str(line.get(key) or "") for key in ("product_name", "description"))
@@ -252,8 +266,9 @@ def _line_payload(
     item["tags"] = [{"id": tag["id"]} if isinstance(tag, dict) else tag for tag in line.get("tags") or []]
     item["tax"] = str(computed.tax)
     item["tax_description"] = result.description
-    if tax_code_field and computed.code_assigned:
-        item[f"custom_field_{tax_code_field}"] = computed.tax_code
+    field: str | None = tax_code_field or (TAX_CODE_FIELD if f"custom_field_{TAX_CODE_FIELD}" in line else None)
+    if field and computed.code_assigned:
+        item[f"custom_field_{field}"] = computed.tax_code
     return item
 
 
