@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% set hide_nav = true %}
+{% block title %}FakeTax tax codes{% endblock %}
+{% block head %}
+<script src="{{ url_for('static', filename='app-bridge.js') }}" data-host-origin="{{ host_origin }}"></script>
+<script>CampfireBridge.autoResize();</script>
+{% endblock %}
+{% block body %}
+<h1><span>Fake</span>Tax product tax codes</h1>
+<p class="muted">Put one of these in the <code>Tax code</code> field on an invoice or credit memo line. Lines without a code are classified from their product and description.</p>
+<table>
+  <thead><tr><th>Code</th><th>Meaning</th><th>Taxed</th></tr></thead>
+  <tbody>{% for code in tax_codes %}<tr><td><code>{{ code.code }}</code><br>{{ code.label }}</td><td class="muted">{{ code.description }}</td><td class="muted">{{ code.when }}</td></tr>{% endfor %}</tbody>
+</table>
+{% endblock %}

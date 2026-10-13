@@ -169,6 +169,50 @@
       "is_active": true
     }
   ],
+  "navigation": [
+    {
+      "key": "faketax",
+      "label": "FakeTax",
+      "icon": "calculator",
+      "url_template": "",
+      "required_scopes": [
+        "invoices:read"
+      ],
+      "is_active": true,
+      "items": [
+        {
+          "key": "jurisdictions",
+          "label": "Jurisdictions",
+          "icon": "map-pin",
+          "url_template": "http://localhost:3999/frame/manage",
+          "required_scopes": [
+            "invoices:read"
+          ],
+          "is_active": true
+        },
+        {
+          "key": "tax-codes",
+          "label": "Tax codes",
+          "icon": "tag",
+          "url_template": "http://localhost:3999/frame/codes",
+          "required_scopes": [
+            "invoices:read"
+          ],
+          "is_active": true
+        },
+        {
+          "key": "settings",
+          "label": "Settings",
+          "icon": "settings",
+          "url_template": "http://localhost:3999/frame/settings",
+          "required_scopes": [
+            "invoices:read"
+          ],
+          "is_active": true
+        }
+      ]
+    }
+  ],
   "event_subscriptions": [
     {
       "topics": [

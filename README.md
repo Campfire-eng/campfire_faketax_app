@@ -31,8 +31,8 @@ Until a workspace finishes onboarding FakeTax taxes everywhere, so the demo work
 3. `cp .env.example .env` and paste `CLIENT_ID`, `CLIENT_SECRET` and `SIGNING_SECRET`.
 4. **Manifest**: paste `manifest.json` into the app's Manifest tab and save. It sets the
    app's details (redirect URL `http://localhost:3999/callback`, connect URL, the
-   `invoices:read` and `invoices:write` scopes), the allowed domain, five buttons, two panels and
-   the invoice event subscription. The app section is versioned: applying it opens a development version,
+   `invoices:read` and `invoices:write` scopes), the allowed domain, five buttons, two panels, a
+   sidebar section with three pages, and the invoice and credit memo event subscriptions. The app section is versioned: applying it opens a development version,
    so click **Promote** on the app page to make it live. For a private app that is immediate,
    with no review. The allowed domain, signing secret, slots and events are not versioned and
    take effect as soon as the manifest is saved.
@@ -123,6 +123,7 @@ the login page when signed out; webhooks, frames and report links use their own 
 | Install config | (none) | `GET/PUT /ca/api/v1/oauth-app-install/config` | Per-workspace `default_rate`, `auto_calculate`, `base_url` set by the app's own token |
 | Onboarding | `connect_url` + `return_to` | `/setup/<workspace>` (3 steps) | Nexus, default tax code, custom field creation with the app token, return to Campfire |
 | Manage link | `manage_url` | `GET /manage?cf_ctx=`, `/manage/<workspace>` | Signed entry from the connection page; single-use token, then a browser session |
+| Sidebar section | `navigation` | `GET /frame/manage`, `/frame/codes`, `/frame/settings` | A **FakeTax** section in Campfire's sidebar with Jurisdictions, Tax codes and Settings pages, each opened full-width with a `surface: "nav"` token |
 | Credit memos | `event_subscriptions` | `POST /events` → `GET/PATCH /coa/api/v1/credit-memo/<id>` | Client address (`GET /coa/api/vendor/<id>`, scope `vendors:read`) picks the jurisdiction |
 | OAuth connect + refresh | app settings | `/connect`, `/callback`, `/refresh/<id>` | PKCE, refresh on expiry or 401, grant dropped when refresh is refused |
 

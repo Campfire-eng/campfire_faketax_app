@@ -324,3 +324,23 @@ def test_onboarding_refreshes_the_options_of_an_existing_field(app_module: Modul
 
     assert field["options"] == ["FT-GOODS-100", "FT-SOFT-200"]
     assert [(m, p) for m, p, _ in calls] == [("GET", "/ca/api/v1/custom-fields?app=chart_of_accounts&model=accountinginvoiceline"), ("PATCH", "/ca/api/v1/custom-fields/5")]
+
+
+def test_sidebar_pages_read_and_save_jurisdictions_with_a_nav_token(app_module: ModuleType) -> None:
+    client = app_module.app.test_client()
+    token = _token(object_ids=[], surface="nav")
+
+    page = client.get("/frame/manage")
+    codes = client.get("/frame/codes")
+    loaded = client.post("/frame/api/manage", json={"context_token": token})
+    saved = client.post(
+        "/frame/api/manage/save",
+        json={"context_token": token, "nexus": ["CA", "XX"], "overrides": {"CA": "8.5", "NY": ""}, "default_tax_code": "FT-SVC-300"},
+    )
+
+    assert page.status_code == 200 and b"<nav>" not in page.data
+    assert codes.status_code == 200 and b"FT-GOODS-100" in codes.data
+    assert loaded.status_code == 200 and len(loaded.get_json()["jurisdictions"]) == 17
+    assert saved.status_code == 200 and saved.get_json()["workspace"] == {
+        "nexus": ["CA"], "overrides": {"CA": "8.5"}, "default_tax_code": "FT-SVC-300", "tax_code_field": None, "onboarded": False,
+    }

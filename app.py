@@ -676,6 +676,78 @@ def _panel_request() -> tuple[dict[str, Any], int]:
     return body, int(claims["customer_id"])
 
 
+@app.get("/frame/manage")
+def frame_manage() -> ResponseReturnValue:
+    """The Jurisdictions page Campfire shows in its sidebar: the manage screen, driven by the bridge."""
+    return render_template("frame_manage.html", host_origin=CAMPFIRE_FRONTEND_ORIGIN)
+
+
+@app.get("/frame/codes")
+def frame_codes() -> ResponseReturnValue:
+    """The tax code catalog; the same for every workspace, so no token is needed."""
+    return render_template("frame_codes.html", host_origin=CAMPFIRE_FRONTEND_ORIGIN, tax_codes=list(TAX_CODES.values()))
+
+
+def _manage_payload(*, customer_id: int) -> dict[str, Any]:
+    workspace: WorkspaceTax = store.workspace(customer_id=customer_id) or store.save_workspace(customer_id=customer_id)
+    return {
+        "customer_id": customer_id,
+        "workspace": {
+            "nexus": workspace.nexus,
+            "overrides": workspace.overrides,
+            "default_tax_code": normalize_tax_code(workspace.default_tax_code),
+            "tax_code_field": workspace.tax_code_field,
+            "onboarded": workspace.onboarded_at is not None,
+        },
+        "jurisdictions": [
+            {
+                "code": j.code,
+                "name": j.name,
+                "state_rate": str(j.state_rate),
+                "local_rate": str(j.local_rate),
+                "combined_rate": str(j.combined_rate),
+                "has_sales_tax": j.has_sales_tax,
+                "taxes_services": j.taxes_services,
+                "taxes_saas": j.taxes_saas,
+                "taxes_digital": j.taxes_digital,
+                "taxes_shipping": j.taxes_shipping,
+            }
+            for j in JURISDICTIONS.values()
+        ],
+        "tax_codes": [{"code": c.code, "label": c.label, "description": c.description, "when": c.when} for c in TAX_CODES.values()],
+    }
+
+
+@app.post("/frame/api/manage")
+def frame_api_manage() -> ResponseReturnValue:
+    _body, customer_id = _panel_request()
+    return jsonify(_manage_payload(customer_id=customer_id))
+
+
+@app.post("/frame/api/manage/save")
+def frame_api_manage_save() -> ResponseReturnValue:
+    body, customer_id = _panel_request()
+    nexus: Any = body.get("nexus", [])
+    raw_overrides: Any = body.get("overrides", {})
+    if not isinstance(nexus, list) or not isinstance(raw_overrides, dict):
+        return jsonify({"level": "error", "message": "nexus must be a list and overrides an object."}), 400
+    overrides: dict[str, str] = {}
+    for code, raw in raw_overrides.items():
+        value: str = str(raw or "").strip()
+        if code in JURISDICTIONS and value:
+            if parse_rate(value) is None:
+                return jsonify({"level": "error", "message": f"{code}: an override must be a number between 0 and 100."}), 400
+            overrides[code] = value
+    default_code: str = normalize_tax_code(str(body.get("default_tax_code") or ""))
+    store.save_workspace(
+        customer_id=customer_id,
+        nexus=[code for code in JURISDICTIONS if code in nexus],
+        overrides=overrides,
+        default_tax_code=default_code,
+    )
+    return jsonify({"level": "success", "message": "FakeTax jurisdictions saved.", **_manage_payload(customer_id=customer_id)})
+
+
 @app.post("/frame/api/settings")
 def frame_api_settings() -> ResponseReturnValue:
     _body, customer_id = _panel_request()
