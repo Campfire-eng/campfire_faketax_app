@@ -146,3 +146,20 @@ def test_event_skips_when_tax_already_applied(app_module: ModuleType, monkeypatc
     app_module._handle_event(event={"kind": "event", "topic": "Invoice.updated", "id": 11, "changed_fields": ["lines"], "customer": {"id": CUSTOMER_ID}})
 
     assert writes == []
+
+
+def test_settings_panel_reads_and_saves_install_config(app_module: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    saved: list[dict[str, str]] = []
+    monkeypatch.setattr(app_module.campfire, "put_install_config", lambda *, customer_id, config: saved.append(config) or config)
+    client = app_module.app.test_client()
+    token = _token(object_ids=[], surface="panel:list")
+
+    loaded = client.post("/frame/api/settings", json={"context_token": token})
+    assert loaded.status_code == 200 and loaded.get_json()["install_config"]["default_rate"] == "5.00"
+
+    result = client.post("/frame/api/settings/save", json={"context_token": token, "default_rate": "7.25", "auto_calculate": False})
+    assert result.status_code == 200 and result.get_json()["level"] == "success"
+    assert saved[0]["default_rate"] == "7.25" and saved[0]["auto_calculate"] == "false"
+
+    record_token = _token(object_ids=["12"], surface="panel:detail")
+    assert client.post("/frame/api/settings", json={"context_token": record_token}).status_code == 403

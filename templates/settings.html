@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block head %}
+<script src="{{ url_for('static', filename='app-bridge.js') }}" data-host-origin="{{ host_origin }}"></script>
+<style> main { margin: 16px auto; } #rate { width: 80px; } </style>
+{% endblock %}
+{% block body %}
+<h1><span>Fake</span>Tax settings</h1>
+<p id="status" class="muted">Waiting for Campfire…</p>
+<div id="content" hidden>
+  <p class="muted">Workspace <span id="workspace"></span>. These values are stored in Campfire as install config.</p>
+  <p><label>Default rate % <input type="text" id="rate" inputmode="decimal" placeholder="blank = ask"></label></p>
+  <p><label><input type="checkbox" id="auto"> Auto-calculate on invoice events</label></p>
+  <button id="save">Save</button>
+</div>
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  let ctx = null;
+
+  function api(path, extra) {
+    return fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(Object.assign({ context_token: ctx.context_token }, extra || {})),
+    }).then((r) => r.json().then((body) => ({ ok: r.ok, body: body })));
+  }
+
+  function fit() { CampfireBridge.resize(document.body.scrollHeight + 16); }
+
+  CampfireBridge.ready().then((context) => {
+    ctx = context;
+    return api("/frame/api/settings");
+  }).then((res) => {
+    if (!res.ok) { $("status").textContent = res.body.error || "Could not load settings."; return; }
+    const config = res.body.install_config || {};
+    $("workspace").textContent = res.body.customer_id;
+    $("rate").value = config.default_rate || "";
+    $("auto").checked = config.auto_calculate === "true";
+    $("status").hidden = true;
+    $("content").hidden = false;
+    fit();
+  }).catch((e) => { $("status").textContent = e.message; });
+
+  $("save").addEventListener("click", () => {
+    api("/frame/api/settings/save", { default_rate: $("rate").value, auto_calculate: $("auto").checked }).then((res) => {
+      CampfireBridge.toast(res.body.level || (res.ok ? "success" : "error"), res.body.message || "Saved.");
+    });
+  });
+})();
+</script>
+{% endblock %}

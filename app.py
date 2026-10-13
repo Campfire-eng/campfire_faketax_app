@@ -132,11 +132,12 @@ def _verified_body() -> dict[str, Any]:
     return body
 
 
-def _claim_frame_token(*, token: str, invoice_id: str) -> dict[str, Any]:
+def _claim_frame_token(*, token: str, invoice_id: str | None) -> dict[str, Any]:
     """
     A frame makes several calls with the one context token Campfire gave it. The first call
     claims the jti and opens a short session bound to it; later calls are let through only for
-    that open session, until the token expires.
+    that open session, until the token expires. A list-page panel has no record, so it passes
+    ``invoice_id=None`` and the token must carry no record either.
     """
     try:
         claims: dict[str, Any] = decode_context_token(token=token, secrets=SIGNING_SECRETS, client_id=CLIENT_ID)
@@ -144,7 +145,10 @@ def _claim_frame_token(*, token: str, invoice_id: str) -> dict[str, Any]:
         abort(401, str(e))
     customer_id: int = int(claims["customer_id"])
     jti: str = str(claims["jti"])
-    if not token_covers(claims=claims, object_type="invoice", object_id=invoice_id):
+    if invoice_id is None:
+        if claims.get("object_ids"):
+            abort(403, "token is for a record, not the list page")
+    elif not token_covers(claims=claims, object_type="invoice", object_id=invoice_id):
         abort(403, "token is not for this invoice")
     if store.frame_session_open(jti=jti, customer_id=customer_id):
         return claims
@@ -362,6 +366,47 @@ def frame_api_apply() -> ResponseReturnValue:
     outcome: InvoiceOutcome = calculate_invoice(customer_id=customer_id, invoice_id=invoice_id, rate_override=rate)
     level, message = summarize(outcomes=[outcome])
     return jsonify({"ok": outcome.kind in ("written", "draft"), "level": level, "message": message})
+
+
+@app.get("/frame/settings")
+def frame_settings() -> ResponseReturnValue:
+    """The list-page panel: this workspace's FakeTax settings, edited inside Campfire."""
+    return render_template("settings.html", host_origin=CAMPFIRE_FRONTEND_ORIGIN)
+
+
+def _panel_request() -> tuple[dict[str, Any], int]:
+    body: Any = request.get_json(silent=True) or {}
+    claims: dict[str, Any] = _claim_frame_token(token=str(body.get("context_token", "")), invoice_id=None)
+    return body, int(claims["customer_id"])
+
+
+@app.post("/frame/api/settings")
+def frame_api_settings() -> ResponseReturnValue:
+    _body, customer_id = _panel_request()
+    grant = store.grant(customer_id=customer_id)
+    if grant is None:
+        return jsonify({"error": "not connected"}), 403
+    return jsonify({"customer_id": customer_id, "install_config": grant.install_config})
+
+
+@app.post("/frame/api/settings/save")
+def frame_api_settings_save() -> ResponseReturnValue:
+    body, customer_id = _panel_request()
+    default_rate: str = str(body.get("default_rate", "")).strip()
+    if default_rate and parse_rate(default_rate) is None:
+        return jsonify({"level": "error", "message": "Enter a rate between 0 and 100, or leave it blank."}), 400
+    grant = store.grant(customer_id=customer_id)
+    config: dict[str, str] = {
+        **(grant.install_config if grant else {}),
+        "default_rate": default_rate,
+        "auto_calculate": "true" if body.get("auto_calculate") else "false",
+        "base_url": PUBLIC_BASE_URL,
+    }
+    try:
+        saved: dict[str, str] = campfire.put_install_config(customer_id=customer_id, config=config)
+    except (NotConnected, requests.HTTPError) as e:
+        return jsonify({"level": "error", "message": f"Could not save to Campfire: {e}"}), 502
+    return jsonify({"level": "success", "message": "FakeTax settings saved.", "install_config": saved})
 
 
 @app.post("/events")

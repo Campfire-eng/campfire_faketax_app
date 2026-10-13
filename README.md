@@ -1,8 +1,8 @@
 # FakeTax
 
 A demo Campfire OAuth app that puts made-up sales tax on invoices. It exists to exercise every
-app-extension capability: link, webhook and iframe slots, event subscriptions and install config.
-The tax is fake; the plumbing is real.
+app-extension capability: link, webhook and iframe buttons, embedded panels, event subscriptions
+and install config. The tax is fake; the plumbing is real.
 
 Tax rule: the rate comes from the invoice's shipping state (CA 7.25, NY 8.00, TX 6.25, WA 6.50),
 otherwise the workspace's `default_rate` install config (5.00 unless changed). Per line,
@@ -11,20 +11,18 @@ otherwise the workspace's `default_rate` install config (5.00 unless changed). P
 
 ## Setup
 
-1. **Create the app** in Campfire (http://localhost:3000) under Developer → Apps:
-   - Redirect URL: `http://localhost:3999/callback`
-   - Connect URL: `http://localhost:3999/connect`
-   - Scopes: `invoices:read`, `invoices:write`
-
-   Copy the client id and secret. Creating the app makes these values production version 1.
-   Changing the redirect URL, connect URL or scopes later opens a development version that does
-   nothing until you click **Promote** on the app page; for a private app it goes live at once,
-   without review. The allowed domain, signing secret, slots and events are not versioned.
+1. **Create the app** in Campfire (http://localhost:3000) under Developer → Apps. Only the name
+   matters; `manifest.json` sets everything else in step 4. Copy the client id and secret.
 2. **Signing secret**: on the app, rotate the signing secret and copy the `whsec_…` value (it is
    shown once).
 3. `cp .env.example .env` and paste `CLIENT_ID`, `CLIENT_SECRET` and `SIGNING_SECRET`.
-4. **Manifest**: paste `manifest.json` into the app's Manifest tab and save. It sets the allowed
-   domain, five slots and the invoice event subscription.
+4. **Manifest**: paste `manifest.json` into the app's Manifest tab and apply it. It sets the
+   app's details (redirect URL `http://localhost:3999/callback`, connect URL, the
+   `invoices:read` and `invoices:write` scopes), the allowed domain, five buttons, two panels and
+   the invoice event subscription. The app section is versioned: applying it opens a development version,
+   so click **Promote** on the app page to make it live. For a private app that is immediate,
+   with no review. The allowed domain, signing secret, slots and events are not versioned and
+   take effect as soon as the manifest is applied.
 5. **Feature flag**: in Django admin (http://localhost:8001/admin), give the workspace the
    `oauth_app_extensions` customer feature flag. Without it no slot shows and no event is sent.
 6. Run it:
@@ -73,8 +71,11 @@ one in `SIGNING_SECRET` (and optionally the old one in `SIGNING_SECRET_PREVIOUS`
    complete this action". Set `slow` (12s sleep, past the 8s timeout): "did not respond in time".
 10. **Activity**: the app's Activity tab in Developer → Apps lists every click (status, timing,
     effects) and every event delivery, including the failures you just caused.
-11. **Revoke**: disconnect FakeTax from the workspace in Campfire. Reload the invoice: the FakeTax
-    buttons are gone, because slots only show while a grant covers their scopes.
+11. **Panels**: the invoice detail page and the edit modal gain a **FakeTax** tab showing the same
+    breakdown frame embedded in the page; the invoice list gains a **FakeTax** tab with the
+    workspace's settings (default rate, auto-calculate), saved straight into install config.
+12. **Revoke**: disconnect FakeTax from the workspace in Campfire. Reload the invoice: the FakeTax
+    buttons and tabs are gone, because they only show while a grant covers their scopes.
 
 ## How it maps to Campfire capabilities
 
@@ -85,6 +86,8 @@ one in `SIGNING_SECRET` (and optionally the old one in `SIGNING_SECRET_PREVIOUS`
 | Webhook slot, detail header | `calculate` | `POST /slots/calculate` | Signed request, `visible_when`, `confirm_text`, `toast` + `refresh` effects, `open_iframe` when it needs input |
 | Webhook slot, list header | `calculate-bulk` | same | Up to 50 selected ids in one call; partial success summarised in one toast |
 | Iframe slot, drawer | `breakdown` | `GET /frame/breakdown/<id>`, `POST /frame/api/*` | `static/app-bridge.js`: `ready` → context, `toast`, `refresh`, `resize`, `close` |
+| Panel, detail page and edit modal | `breakdown-tab` | `GET /frame/breakdown/<id>` | The breakdown frame embedded as a tab; same bridge, no drawer |
+| Panel, list page | `settings` | `GET /frame/settings`, `POST /frame/api/settings[/save]` | A token with no record; settings written to install config from inside Campfire |
 | Event subscription | `event_subscriptions` | `POST /events` | Signed thin events; FakeTax re-reads the invoice with its own token |
 | Install config | (none) | `GET/PUT /ca/api/v1/oauth-app-install/config` | Per-workspace `default_rate`, `auto_calculate`, `base_url` set by the app's own token |
 | OAuth connect + refresh | app settings | `/connect`, `/callback`, `/refresh/<id>` | PKCE, refresh on expiry or 401, grant dropped when refresh is refused |
@@ -141,6 +144,6 @@ one in `SIGNING_SECRET` (and optionally the old one in `SIGNING_SECRET_PREVIOUS`
 | `security.py` | Signature and context-token verification |
 | `store.py` | SQLite: grants, seen jti, frame sessions, settings, cached invoices |
 | `static/app-bridge.js` | The iframe side of the Campfire bridge |
-| `templates/` | Home, report and breakdown pages |
-| `manifest.json` | Paste into the app's Manifest tab |
+| `templates/` | Home, report, breakdown and settings pages |
+| `manifest.json` | The whole app: details, scopes, allowed domain, buttons, panels, events. Paste into the Manifest tab |
 | `tests/` | pytest |

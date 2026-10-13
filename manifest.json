@@ -1,5 +1,21 @@
 {
-  "allowed_domains": ["localhost"],
+  "app": {
+    "name": "FakeTax",
+    "tagline": "Made-up sales tax on invoices",
+    "description": "Demo app that exercises Campfire app slots, event subscriptions and install config. The tax is fake; the plumbing is real.",
+    "icon_url": null,
+    "redirect_uris": [
+      "http://localhost:3999/callback"
+    ],
+    "connect_url": "http://localhost:3999/connect",
+    "allowed_scopes": [
+      "invoices:read",
+      "invoices:write"
+    ]
+  },
+  "allowed_domains": [
+    "localhost"
+  ],
   "slots": [
     {
       "key": "view",
@@ -9,8 +25,12 @@
       "surface": "detail_header",
       "requested_variant": "menu",
       "action_type": "link",
-      "action_config": {"url_template": "http://localhost:3999/report/{{record.id}}"},
-      "required_scopes": ["invoices:read"],
+      "action_config": {
+        "url_template": "http://localhost:3999/report/{{record.id}}"
+      },
+      "required_scopes": [
+        "invoices:read"
+      ],
       "visible_when": [],
       "confirm_text": "",
       "order": 2,
@@ -24,9 +44,24 @@
       "surface": "detail_header",
       "requested_variant": "secondary",
       "action_type": "webhook",
-      "action_config": {"url_template": "http://localhost:3999/slots/calculate", "timeout_ms": 8000},
-      "required_scopes": ["invoices:read", "invoices:write"],
-      "visible_when": [{"field": "payment_status", "op": "in", "value": ["draft", "open"]}],
+      "action_config": {
+        "url_template": "http://localhost:3999/slots/calculate",
+        "timeout_ms": 8000
+      },
+      "required_scopes": [
+        "invoices:read",
+        "invoices:write"
+      ],
+      "visible_when": [
+        {
+          "field": "payment_status",
+          "op": "in",
+          "value": [
+            "draft",
+            "open"
+          ]
+        }
+      ],
       "confirm_text": "Overwrite tax on every line?",
       "order": 0,
       "is_active": true
@@ -39,8 +74,14 @@
       "surface": "list_header",
       "requested_variant": "menu",
       "action_type": "webhook",
-      "action_config": {"url_template": "http://localhost:3999/slots/calculate", "timeout_ms": 8000},
-      "required_scopes": ["invoices:read", "invoices:write"],
+      "action_config": {
+        "url_template": "http://localhost:3999/slots/calculate",
+        "timeout_ms": 8000
+      },
+      "required_scopes": [
+        "invoices:read",
+        "invoices:write"
+      ],
       "visible_when": [],
       "confirm_text": "",
       "order": 0,
@@ -54,8 +95,12 @@
       "surface": "row_menu",
       "requested_variant": "menu",
       "action_type": "link",
-      "action_config": {"url_template": "http://localhost:3999/report/{{record.id}}"},
-      "required_scopes": ["invoices:read"],
+      "action_config": {
+        "url_template": "http://localhost:3999/report/{{record.id}}"
+      },
+      "required_scopes": [
+        "invoices:read"
+      ],
       "visible_when": [],
       "confirm_text": "",
       "order": 0,
@@ -69,17 +114,64 @@
       "surface": "detail_header",
       "requested_variant": "menu",
       "action_type": "iframe",
-      "action_config": {"url_template": "http://localhost:3999/frame/breakdown/{{record.id}}", "presentation": "drawer", "width": "lg"},
-      "required_scopes": ["invoices:read", "invoices:write"],
+      "action_config": {
+        "url_template": "http://localhost:3999/frame/breakdown/{{record.id}}",
+        "presentation": "drawer",
+        "width": "lg"
+      },
+      "required_scopes": [
+        "invoices:read",
+        "invoices:write"
+      ],
       "visible_when": [],
       "confirm_text": "",
       "order": 1,
       "is_active": true
     }
   ],
+  "panels": [
+    {
+      "key": "breakdown-tab",
+      "label": "FakeTax",
+      "icon": "table",
+      "object_type": "invoice",
+      "placements": [
+        "detail",
+        "edit"
+      ],
+      "url_template": "http://localhost:3999/frame/breakdown/{{record.id}}",
+      "required_scopes": [
+        "invoices:read",
+        "invoices:write"
+      ],
+      "visible_when": [],
+      "order": 0,
+      "is_active": true
+    },
+    {
+      "key": "settings",
+      "label": "FakeTax",
+      "icon": "settings",
+      "object_type": "invoice",
+      "placements": [
+        "list"
+      ],
+      "url_template": "http://localhost:3999/frame/settings",
+      "required_scopes": [
+        "invoices:read"
+      ],
+      "visible_when": [],
+      "order": 0,
+      "is_active": true
+    }
+  ],
   "event_subscriptions": [
     {
-      "topics": ["Invoice.created", "Invoice.updated", "Invoice.deleted"],
+      "topics": [
+        "Invoice.created",
+        "Invoice.updated",
+        "Invoice.deleted"
+      ],
       "endpoint_url": "http://localhost:3999/events",
       "is_active": true
     }
