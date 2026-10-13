@@ -32,6 +32,7 @@
   nav .brand { font-weight: 700; text-decoration: none; color: var(--fg); } nav .brand span { color: var(--accent); }
   nav .who { color: var(--muted); } nav .who strong { color: var(--fg); } nav a { color: var(--accent); }
 </style>
+{% if hide_nav %}<style> main { max-width: none; margin: 0; padding: 20px 24px 24px; } body { overflow-x: hidden; } </style>{% endif %}
 {% block head %}{% endblock %}
 </head>
 <body>

@@ -2,7 +2,7 @@
 {% set hide_nav = true %}
 {% block head %}
 <script src="{{ url_for('static', filename='app-bridge.js') }}" data-host-origin="{{ host_origin }}"></script>
-<style> main { margin: 16px auto; } #rate { width: 80px; } </style>
+<style> #rate { width: 80px; } </style>
 {% endblock %}
 {% block body %}
 <h1><span>Fake</span>Tax breakdown</h1>
@@ -21,6 +21,7 @@
 <script>
 (function () {
   const invoiceId = {{ invoice_id }};
+  CampfireBridge.autoResize();
   const $ = (id) => document.getElementById(id);
   let ctx = null;
   let data = null;
@@ -56,7 +57,7 @@
     });
     $("total").textContent = isNaN(rate) ? "-" : cents(total) + " " + (data.currency || "");
     $("apply").disabled = isNaN(rate);
-    CampfireBridge.resize(document.body.scrollHeight);
+    CampfireBridge.resize();
   }
 
   CampfireBridge.ready()

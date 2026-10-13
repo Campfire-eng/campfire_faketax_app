@@ -2,7 +2,7 @@
 {% set hide_nav = true %}
 {% block head %}
 <script src="{{ url_for('static', filename='app-bridge.js') }}" data-host-origin="{{ host_origin }}"></script>
-<style> main { margin: 16px auto; } #rate { width: 80px; } </style>
+<style> #rate { width: 80px; } </style>
 {% endblock %}
 {% block body %}
 <h1><span>Fake</span>Tax settings</h1>
@@ -26,7 +26,8 @@
     }).then((r) => r.json().then((body) => ({ ok: r.ok, body: body })));
   }
 
-  function fit() { CampfireBridge.resize(document.body.scrollHeight + 16); }
+  function fit() { CampfireBridge.resize(); }
+  CampfireBridge.autoResize();
 
   CampfireBridge.ready().then((context) => {
     ctx = context;

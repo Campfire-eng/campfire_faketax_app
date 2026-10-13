@@ -46,7 +46,19 @@
     },
     toast: function (level, message) { post("toast", { level: level, message: message }); },
     refresh: function () { post("refresh"); },
-    resize: function (height) { post("resize", { height: Math.ceil(height || document.body.scrollHeight) }); },
+    resize: function (height) {
+      // The document, not the body: body.scrollHeight drops margins that collapse through it.
+      const measured = function () { return document.documentElement.scrollHeight; };
+      if (height) { post("resize", { height: Math.ceil(height) }); return; }
+      requestAnimationFrame(function () { requestAnimationFrame(function () { post("resize", { height: Math.ceil(measured()) }); }); });
+    },
+    // Keep the frame sized to its content as fonts load and the window changes.
+    autoResize: function () {
+      const self = this;
+      window.addEventListener("load", function () { self.resize(); });
+      window.addEventListener("resize", function () { self.resize(); });
+      if (window.ResizeObserver) new ResizeObserver(function () { self.resize(); }).observe(document.body);
+    },
     close: function () { post("close"); },
     openUrl: function (url) { post("open_url", { url: url }); },
   };
