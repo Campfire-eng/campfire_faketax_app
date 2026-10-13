@@ -13,7 +13,10 @@ any state's combined rate. Each line carries a FakeTax **product tax code** in a
 professional services, `FT-SVC-310` installation and repair, `FT-SHIP-400` shipping, `FT-FOOD-500`
 groceries, `FT-MED-510` medical, `FT-EXEMPT-900` resale, `FT-EXEMPT-910` exempt organization). Each
 code has a rule, and each state says which rules it taxes: services, SaaS, digital goods, delivery
-charges. The old names (`TAXABLE`, `SAAS`, `SERVICE`, `EXEMPT`) still resolve.
+charges. The old names (`TAXABLE`, `SAAS`, `SERVICE`, `EXEMPT`) still resolve. A line that carries no code is
+classified from its product name and description (subscription → SaaS, shipping → delivery, support
+→ services, and so on), falling back to the workspace default, and the chosen code is written onto
+the line together with the tax so the next run sees it.
 Unknown states fall back to the workspace's `default_rate` install config. Per line,
 `tax = (amount - discount) * rate / 100`, rounded half-up to cents, with
 `tax_description = "FakeTax CA 7.25%"` (or `FakeTax NY no nexus`, `FakeTax OR no sales tax`).

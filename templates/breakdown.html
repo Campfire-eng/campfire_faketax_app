@@ -11,9 +11,9 @@
   <p id="address" class="muted"></p>
   <p><label>Rate % <input type="text" id="rate" inputmode="decimal"></label> <span id="rate-note" class="muted"></span></p>
   <table>
-    <thead><tr><th>Line</th><th class="num">Taxable</th><th class="num">Current tax</th><th class="num">FakeTax</th></tr></thead>
+    <thead><tr><th>Line</th><th>Code</th><th class="num">Taxable</th><th class="num">Current tax</th><th class="num">FakeTax</th></tr></thead>
     <tbody id="lines"></tbody>
-    <tfoot><tr><th>Total</th><th></th><th></th><th class="num" id="total"></th></tr></tfoot>
+    <tfoot><tr><th>Total</th><th></th><th></th><th></th><th class="num" id="total"></th></tr></tfoot>
   </table>
   <button id="apply">Apply to invoice</button>
   <button id="cancel" class="secondary">Cancel</button>
@@ -44,13 +44,14 @@
     let total = 0;
     data.lines.forEach((line) => {
       const base = parseFloat(line.base);
-      const tax = isNaN(rate) ? 0 : lineTax(base, rate);
+      const tax = isNaN(rate) || line.taxable === false ? 0 : lineTax(base, rate);
       total += tax;
       const tr = document.createElement("tr");
-      [line.description, cents(base), cents(parseFloat(line.current_tax)), isNaN(rate) ? "-" : cents(tax)].forEach((text, i) => {
+      const code = (line.tax_code || "") + (line.taxable === false ? " · not taxed here" : "");
+      [line.description, code, cents(base), cents(parseFloat(line.current_tax)), isNaN(rate) ? "-" : cents(tax)].forEach((text, i) => {
         const td = document.createElement("td");
         td.textContent = text;
-        if (i > 0) td.className = "num";
+        if (i > 1) td.className = "num";
         tr.appendChild(td);
       });
       tbody.appendChild(tr);

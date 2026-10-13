@@ -143,3 +143,24 @@ def code_is_taxable(*, code: str | None, jurisdiction: Jurisdiction) -> bool:
         "digital": jurisdiction.taxes_digital,
         "shipping": jurisdiction.taxes_shipping,
     }[rule]
+
+
+# What a product or description usually means, when a line carries no code of its own.
+CLASSIFIER_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("FT-SHIP-400", ("shipping", "freight", "delivery", "handling")),
+    ("FT-SVC-310", ("install", "repair", "maintenance labor", "onsite")),
+    ("FT-SVC-300", ("consult", "service", "support", "implementation", "training", "hours", "professional", "onboarding")),
+    ("FT-SOFT-210", ("download", "license", "licence", "e-book", "ebook", "digital")),
+    ("FT-SOFT-200", ("subscription", "saas", "software", "platform", "cloud", "seat", "automation", "api")),
+    ("FT-FOOD-500", ("grocer", "produce", "food")),
+    ("FT-MED-510", ("medical", "prescription", "rx")),
+)
+
+
+def classify_line_text(text: str) -> str | None:
+    """A code suggested from a product name or description; None when nothing matches."""
+    lowered: str = text.lower()
+    for code, keywords in CLASSIFIER_KEYWORDS:
+        if any(keyword in lowered for keyword in keywords):
+            return code
+    return None

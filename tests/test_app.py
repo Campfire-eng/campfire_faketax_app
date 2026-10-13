@@ -293,3 +293,34 @@ def test_embedded_frames_have_no_navbar(app_module: ModuleType) -> None:
     login = client.get("/login")
 
     assert b"<nav>" not in breakdown.data and b"<nav>" not in settings.data and b"<nav>" not in login.data
+
+
+def test_onboarding_refreshes_the_options_of_an_existing_field(app_module: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, str, Any]] = []
+
+    class Response:
+        status_code = 200
+
+        def __init__(self, body: Any) -> None:
+            self._body = body
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> Any:
+            return self._body
+
+    def fake_request(*, customer_id: int, method: str, path: str, json: Any = None) -> Response:
+        calls.append((method, path, json))
+        if method == "GET":
+            return Response({"results": [{"id": 5, "name": "tax_code", "options": ["TAXABLE", "SAAS"]}]})
+        return Response({"id": 5, "name": "tax_code", "options": json["options"]})
+
+    monkeypatch.setattr(app_module.campfire, "request", fake_request)
+
+    field = app_module.campfire.create_custom_field(
+        customer_id=CUSTOMER_ID, model="accountinginvoiceline", name="tax_code", label="Tax code", options=["FT-GOODS-100", "FT-SOFT-200"]
+    )
+
+    assert field["options"] == ["FT-GOODS-100", "FT-SOFT-200"]
+    assert [(m, p) for m, p, _ in calls] == [("GET", "/ca/api/v1/custom-fields?app=chart_of_accounts&model=accountinginvoiceline"), ("PATCH", "/ca/api/v1/custom-fields/5")]

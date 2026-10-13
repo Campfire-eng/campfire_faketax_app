@@ -139,7 +139,13 @@ def calculate_invoice(
         return InvoiceOutcome(invoice_id=invoice_id, kind="skipped", detail="no lines")
     if only_if_changed and result.already_applied:
         return InvoiceOutcome(invoice_id=invoice_id, kind="unchanged")
-    outcome: WriteOutcome = campfire.write_tax(customer_id=customer_id, invoice=invoice, result=result)
+    workspace: WorkspaceTax | None = store.workspace(customer_id=customer_id)
+    outcome: WriteOutcome = campfire.write_tax(
+        customer_id=customer_id,
+        invoice=invoice,
+        result=result,
+        tax_code_field=workspace.tax_code_field if workspace else None,
+    )
     return InvoiceOutcome(invoice_id=invoice_id, kind=outcome.kind, detail=outcome.detail, tax=result.total_tax)
 
 
@@ -164,7 +170,10 @@ def calculate_credit_memo(*, customer_id: int, memo_id: int) -> InvoiceOutcome:
         return InvoiceOutcome(invoice_id=memo_id, kind="skipped", detail="no lines")
     if result.already_applied:
         return InvoiceOutcome(invoice_id=memo_id, kind="unchanged")
-    outcome: WriteOutcome = campfire.write_credit_memo_tax(customer_id=customer_id, memo=memo, result=result)
+    workspace: WorkspaceTax | None = store.workspace(customer_id=customer_id)
+    outcome: WriteOutcome = campfire.write_credit_memo_tax(
+        customer_id=customer_id, memo=memo, result=result, tax_code_field=workspace.tax_code_field if workspace else None
+    )
     return InvoiceOutcome(invoice_id=memo_id, kind=outcome.kind, detail=outcome.detail, tax=result.total_tax)
 
 

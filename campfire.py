@@ -109,13 +109,15 @@ class Campfire:
         self.store.cache_invoice(customer_id=customer_id, invoice=invoice)
         return invoice
 
-    def write_tax(self, *, customer_id: int, invoice: dict[str, Any], result: TaxResult) -> WriteOutcome:
-        """PATCH every line back with FakeTax's tax. A 202 means Campfire filed it for approval."""
+    def write_tax(
+        self, *, customer_id: int, invoice: dict[str, Any], result: TaxResult, tax_code_field: str | None = None
+    ) -> WriteOutcome:
+        """PATCH every line back with FakeTax's tax and codes. A 202 means Campfire filed it for approval."""
         r = self.request(
             customer_id=customer_id,
             method="PATCH",
             path=INVOICE_PATH.format(id=invoice["id"]),
-            json={"lines": lines_payload(invoice=invoice, result=result)},
+            json={"lines": lines_payload(invoice=invoice, result=result, tax_code_field=tax_code_field)},
         )
         if r.status_code == 202 or _is_draft_queue(r):
             return WriteOutcome(kind="draft")
@@ -132,12 +134,14 @@ class Campfire:
         memo: dict[str, Any] = r.json()
         return memo
 
-    def write_credit_memo_tax(self, *, customer_id: int, memo: dict[str, Any], result: TaxResult) -> WriteOutcome:
+    def write_credit_memo_tax(
+        self, *, customer_id: int, memo: dict[str, Any], result: TaxResult, tax_code_field: str | None = None
+    ) -> WriteOutcome:
         r = self.request(
             customer_id=customer_id,
             method="PATCH",
             path=CREDIT_MEMO_PATH.format(id=memo["id"]),
-            json={"lines": credit_memo_lines_payload(memo=memo, result=result)},
+            json={"lines": credit_memo_lines_payload(memo=memo, result=result, tax_code_field=tax_code_field)},
         )
         if r.status_code == 202 or _is_draft_queue(r):
             return WriteOutcome(kind="draft")
@@ -166,10 +170,20 @@ class Campfire:
     def create_custom_field(
         self, *, customer_id: int, model: str, name: str, label: str, options: list[str]
     ) -> dict[str, Any]:
-        """A single-select field on ``model`` lines, or the existing field of that name."""
+        """A single-select field on ``model`` lines, or the existing field of that name with its options brought up to date."""
         for field in self.list_custom_fields(customer_id=customer_id, model=model):
             if field.get("name") == name:
-                return field
+                if list(field.get("options") or []) == options:
+                    return field
+                r = self.request(
+                    customer_id=customer_id,
+                    method="PATCH",
+                    path=f"{CUSTOM_FIELDS_PATH}/{field['id']}",
+                    json={"options": options},
+                )
+                r.raise_for_status()
+                updated: dict[str, Any] = r.json()
+                return updated
         r = self.request(
             customer_id=customer_id,
             method="POST",

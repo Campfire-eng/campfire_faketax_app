@@ -183,3 +183,36 @@ class TestNexusAndTaxCodes:
         result = compute_credit_memo_tax(memo=memo, state="CA", default_rate="", workspace=_workspace())
 
         assert result.lines[0].tax == Decimal("2.90") and result.description == "FakeTax CA 7.25%"
+
+
+class TestCodeAssignment:
+    def test_uncoded_lines_are_classified_and_written_back(self) -> None:
+        invoice = _invoice(
+            address="Austin, TX 78701",
+            lines=[
+                {"id": 1, "amount": 100, "tax": 0, "product_name": "Core Accounting + Revenue automation"},
+                {"id": 2, "amount": 50, "tax": 0, "description": "Shipping"},
+                {"id": 3, "amount": 10, "tax": 0, "custom_field_tax_code": "FT-EXEMPT-910"},
+            ],
+        )
+
+        result = compute_invoice_tax(invoice=invoice, default_rate="", workspace=_workspace(nexus=["TX"]))
+        payload = lines_payload(invoice=invoice, result=result, tax_code_field="tax_code")
+
+        assert [(line.tax_code, line.code_assigned) for line in result.lines] == [
+            ("FT-SOFT-200", True),
+            ("FT-SHIP-400", True),
+            ("FT-EXEMPT-910", False),
+        ]
+        assert [item.get("custom_field_tax_code") for item in payload] == ["FT-SOFT-200", "FT-SHIP-400", "FT-EXEMPT-910"]
+        assert not result.already_applied
+
+    def test_nothing_to_write_once_codes_and_tax_are_on_the_lines(self) -> None:
+        invoice = _invoice(
+            address="Austin, TX 78701",
+            lines=[{"id": 1, "amount": 100, "tax": "6.25", "custom_field_tax_code": "FT-GOODS-100"}],
+        )
+
+        result = compute_invoice_tax(invoice=invoice, default_rate="", workspace=_workspace(nexus=["TX"]))
+
+        assert result.already_applied

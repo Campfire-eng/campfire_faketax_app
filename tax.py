@@ -6,7 +6,15 @@ from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
 
-from jurisdictions import JURISDICTIONS, STATE_NAMES, TAX_CODES, Jurisdiction, code_is_taxable, normalize_tax_code
+from jurisdictions import (
+    JURISDICTIONS,
+    STATE_NAMES,
+    TAX_CODES,
+    Jurisdiction,
+    classify_line_text,
+    code_is_taxable,
+    normalize_tax_code,
+)
 from store import WorkspaceTax
 
 CENTS: Decimal = Decimal("0.01")
@@ -51,6 +59,8 @@ class LineTax:
     current_tax: Decimal
     tax_code: str = "FT-GOODS-100"
     taxable: bool = True
+    # True when the line carried no code and FakeTax chose one; the write puts it on the line.
+    code_assigned: bool = False
 
 
 @dataclass(frozen=True)
@@ -72,7 +82,7 @@ class TaxResult:
 
     @property
     def already_applied(self) -> bool:
-        return all(line.tax == line.current_tax for line in self.lines)
+        return all(line.tax == line.current_tax and not line.code_assigned for line in self.lines)
 
 
 def to_decimal(value: Any) -> Decimal:
@@ -140,12 +150,19 @@ def tax_description(*, state: str | None, rate: Decimal, nexus: bool = True) -> 
     return f"FakeTax {state} {rate:.2f}%" if state else f"FakeTax {rate:.2f}%"
 
 
-def line_tax_code(*, line: Mapping[str, Any], workspace: WorkspaceTax | None) -> str:
-    """The line's tax code from the custom field onboarding created, else the workspace default."""
+def line_tax_code(*, line: Mapping[str, Any], workspace: WorkspaceTax | None) -> tuple[str, bool]:
+    """
+    The line's tax code and whether FakeTax assigned it. A code on the line wins; otherwise the
+    product name and description are classified, and the workspace default is the last resort.
+    """
     if workspace is None:
-        return normalize_tax_code(None)
+        return normalize_tax_code(None), False
     value: Any = line.get(f"custom_field_{workspace.tax_code_field}") if workspace.tax_code_field else None
-    return normalize_tax_code(str(value) if value else workspace.default_tax_code)
+    if value:
+        return normalize_tax_code(str(value)), False
+    text: str = " ".join(str(line.get(key) or "") for key in ("product_name", "description"))
+    suggested: str | None = classify_line_text(text)
+    return normalize_tax_code(suggested or workspace.default_tax_code), True
 
 
 def line_tax(*, amount: Decimal, discount: Decimal, rate: Decimal) -> Decimal:
@@ -171,7 +188,7 @@ def compute_lines_tax(
     for line in lines_in:
         amount: Decimal = to_decimal(line.get("amount"))
         discount: Decimal = to_decimal(line.get("discount"))
-        code: str = line_tax_code(line=line, workspace=workspace)
+        code, assigned = line_tax_code(line=line, workspace=workspace)
         taxable: bool = (
             code_is_taxable(code=code, jurisdiction=jurisdiction)
             if jurisdiction
@@ -186,6 +203,7 @@ def compute_lines_tax(
                 current_tax=to_decimal(line.get("tax")),
                 tax_code=code,
                 taxable=taxable,
+                code_assigned=assigned,
             )
         )
     return TaxResult(
@@ -226,29 +244,38 @@ def compute_credit_memo_tax(
     )
 
 
-def lines_payload(*, invoice: Mapping[str, Any], result: TaxResult) -> list[dict[str, Any]]:
-    """The full ``lines`` list for PATCH, each line as it was plus FakeTax's tax."""
-    payload: list[dict[str, Any]] = []
-    for line, computed in zip(invoice.get("lines") or [], result.lines, strict=True):
-        item: dict[str, Any] = {field: line[field] for field in WRITABLE_LINE_FIELDS if field in line}
-        item.update({key: value for key, value in line.items() if key.startswith("custom_field_")})
-        item["tags"] = [{"id": tag["id"]} if isinstance(tag, dict) else tag for tag in line.get("tags") or []]
-        item["tax"] = str(computed.tax)
-        item["tax_description"] = result.description
-        payload.append(item)
-    return payload
+def _line_payload(
+    *, line: Mapping[str, Any], computed: LineTax, result: TaxResult, fields: tuple[str, ...], tax_code_field: str | None
+) -> dict[str, Any]:
+    item: dict[str, Any] = {field: line[field] for field in fields if field in line}
+    item.update({key: value for key, value in line.items() if key.startswith("custom_field_")})
+    item["tags"] = [{"id": tag["id"]} if isinstance(tag, dict) else tag for tag in line.get("tags") or []]
+    item["tax"] = str(computed.tax)
+    item["tax_description"] = result.description
+    if tax_code_field and computed.code_assigned:
+        item[f"custom_field_{tax_code_field}"] = computed.tax_code
+    return item
 
 
-def credit_memo_lines_payload(*, memo: Mapping[str, Any], result: TaxResult) -> list[dict[str, Any]]:
-    payload: list[dict[str, Any]] = []
-    for line, computed in zip(memo.get("lines") or [], result.lines, strict=True):
-        item: dict[str, Any] = {field: line[field] for field in WRITABLE_CREDIT_MEMO_LINE_FIELDS if field in line}
-        item.update({key: value for key, value in line.items() if key.startswith("custom_field_")})
-        item["tags"] = [{"id": tag["id"]} if isinstance(tag, dict) else tag for tag in line.get("tags") or []]
-        item["tax"] = str(computed.tax)
-        item["tax_description"] = result.description
-        payload.append(item)
-    return payload
+def lines_payload(
+    *, invoice: Mapping[str, Any], result: TaxResult, tax_code_field: str | None = None
+) -> list[dict[str, Any]]:
+    """The full ``lines`` list for PATCH: each line as it was, plus FakeTax's tax and any code it assigned."""
+    return [
+        _line_payload(line=line, computed=computed, result=result, fields=WRITABLE_LINE_FIELDS, tax_code_field=tax_code_field)
+        for line, computed in zip(invoice.get("lines") or [], result.lines, strict=True)
+    ]
+
+
+def credit_memo_lines_payload(
+    *, memo: Mapping[str, Any], result: TaxResult, tax_code_field: str | None = None
+) -> list[dict[str, Any]]:
+    return [
+        _line_payload(
+            line=line, computed=computed, result=result, fields=WRITABLE_CREDIT_MEMO_LINE_FIELDS, tax_code_field=tax_code_field
+        )
+        for line, computed in zip(memo.get("lines") or [], result.lines, strict=True)
+    ]
 
 
 def vendor_address(vendor: Mapping[str, Any]) -> str:
