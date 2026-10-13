@@ -231,3 +231,16 @@ def test_credit_memo_event_taxes_lines_by_the_clients_state(app_module: ModuleTy
     app_module._handle_event(event={"kind": "event", "topic": "CreditMemo.created", "id": 9, "customer": {"id": CUSTOMER_ID}})
 
     assert len(writes) == 1 and str(writes[0]["result"].lines[0].tax) == "2.90"
+
+
+def test_home_opens_a_workspaces_manage_screen(app_module: ModuleType) -> None:
+    client = app_module.app.test_client()
+
+    home = client.get("/")
+    opened = client.get(f"/open/{CUSTOMER_ID}/manage")
+    page = client.get(f"/manage/{CUSTOMER_ID}")
+
+    assert home.status_code == 200 and b"Manage jurisdictions" in home.data and b"Run onboarding" in home.data
+    assert opened.status_code == 302 and opened.headers["Location"].endswith(f"/manage/{CUSTOMER_ID}")
+    assert page.status_code == 200
+    assert client.get("/open/999/manage").status_code == 404

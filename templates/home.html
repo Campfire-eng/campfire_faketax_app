@@ -1,11 +1,21 @@
 {% extends "base.html" %}
 {% block body %}
 <h1><span>Fake</span>Tax</h1>
-<p class="muted">Made-up sales tax for Campfire invoices. A demo of app slots, events and install config.</p>
+<p class="muted">Made-up sales tax for Campfire invoices and credit memos. A demo of app buttons, panels, events, install config, onboarding and a manage screen.</p>
 {% if error %}<p class="error">{{ error }}</p>{% endif %}
 {% if notice %}<p class="notice">{{ notice }}</p>{% endif %}
 {% if not signing_configured %}<p class="error">SIGNING_SECRET is not set in .env: Campfire's webhooks will be refused.</p>{% endif %}
 <p><a class="button" href="{{ url_for('connect') }}">Connect a Campfire workspace</a></p>
+
+<h2>Where things are</h2>
+<table>
+  <tbody>
+    <tr><td><strong>Onboarding</strong></td><td class="muted">Runs once after a workspace connects: nexus states, default tax code, the <code>Tax code</code> custom field. Rerun it from a workspace card below.</td></tr>
+    <tr><td><strong>Manage screen</strong></td><td class="muted">Jurisdictions, rates, overrides and tax codes. Campfire opens it from the app's connection page (<em>Manage in FakeTax</em>); the cards below open it directly.</td></tr>
+    <tr><td><strong>Buttons and panels</strong></td><td class="muted">Live inside Campfire on invoice pages: Calculate tax, Tax breakdown, View in FakeTax, and the FakeTax tab. They only show while the workspace is connected.</td></tr>
+    <tr><td><strong>Events</strong></td><td class="muted">Invoice and credit memo changes arrive at <code>/events</code>; with auto-calculate on, FakeTax writes tax a moment later.</td></tr>
+  </tbody>
+</table>
 
 <h2>Connected workspaces</h2>
 {% for ws in workspaces %}
@@ -26,6 +36,18 @@
       <button type="submit">Save</button>
     </form>
     <p class="muted" style="margin:8px 0 0">Install config in Campfire: <code>{{ g.install_config | tojson }}</code></p>
+    <p style="margin:8px 0 0">
+      {% if ws.tax and ws.tax.onboarded_at %}
+        Nexus: <strong>{{ ws.tax.nexus|join(", ") if ws.tax.nexus else "none" }}</strong> ·
+        tax code field: {% if ws.tax.tax_code_field %}<code>{{ ws.tax.tax_code_field }}</code>{% else %}not created{% endif %}
+      {% else %}
+        <span class="error">Not set up yet</span>
+      {% endif %}
+    </p>
+    <p style="margin:8px 0 0">
+      <a class="button" href="{{ url_for('open_screen', customer_id=g.customer_id, screen='manage') }}">Manage jurisdictions</a>
+      <a class="button secondary" href="{{ url_for('open_screen', customer_id=g.customer_id, screen='setup') }}">{% if ws.tax and ws.tax.onboarded_at %}Rerun onboarding{% else %}Run onboarding{% endif %}</a>
+    </p>
     <p style="margin:8px 0 0"><a href="{{ url_for('refresh', customer_id=g.customer_id) }}">Refresh token</a> ·
       <a href="{{ url_for('disconnect', customer_id=g.customer_id) }}">Forget tokens</a></p>
   </div>

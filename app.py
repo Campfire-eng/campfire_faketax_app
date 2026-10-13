@@ -213,6 +213,7 @@ def home() -> ResponseReturnValue:
             "simulate_failure": store.simulate_failure(customer_id=grant.customer_id),
             "cached": store.cached_invoice_count(customer_id=grant.customer_id),
             "expires_in": int(grant.expires_at - time.time()),
+            "tax": store.workspace(customer_id=grant.customer_id),
         }
         for grant in store.grants()
     ]
@@ -231,6 +232,17 @@ def _campfire_return_url(candidate: str | None) -> str | None:
     if candidate and candidate.startswith(CAMPFIRE_FRONTEND_ORIGIN + "/"):
         return candidate
     return None
+
+
+@app.get("/open/<int:customer_id>/<string:screen>")
+def open_screen(customer_id: int, screen: str) -> ResponseReturnValue:
+    """The home page is the demo's back door: it may open any connected workspace's screens."""
+    if store.grant(customer_id=customer_id) is None:
+        abort(404, "not connected")
+    _remember_workspace(customer_id)
+    if screen == "setup":
+        return redirect(url_for("setup_nexus", customer_id=customer_id))
+    return redirect(url_for("manage_workspace", customer_id=customer_id))
 
 
 @app.get("/connect")
