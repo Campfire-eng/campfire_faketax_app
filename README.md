@@ -8,8 +8,12 @@ Tax rule: the invoice's shipping state (or, for a credit memo, the client's addr
 jurisdiction from `jurisdictions.py`, seventeen US states with a state rate, an average local
 add-on and whether the state taxes services and SaaS. A workspace only collects where it has
 **nexus**, chosen during onboarding and editable on the manage screen, which can also override
-any state's combined rate. Each line carries a **tax code** in a Campfire custom field
-(`TAXABLE`, `SAAS`, `SERVICE`, `EXEMPT`) that decides whether that line is taxed in that state.
+any state's combined rate. Each line carries a FakeTax **product tax code** in a Campfire custom field, from a catalog of ten
+(`FT-GOODS-100` tangible goods, `FT-SOFT-200` SaaS, `FT-SOFT-210` digital goods, `FT-SVC-300`
+professional services, `FT-SVC-310` installation and repair, `FT-SHIP-400` shipping, `FT-FOOD-500`
+groceries, `FT-MED-510` medical, `FT-EXEMPT-900` resale, `FT-EXEMPT-910` exempt organization). Each
+code has a rule, and each state says which rules it taxes: services, SaaS, digital goods, delivery
+charges. The old names (`TAXABLE`, `SAAS`, `SERVICE`, `EXEMPT`) still resolve.
 Unknown states fall back to the workspace's `default_rate` install config. Per line,
 `tax = (amount - discount) * rate / 100`, rounded half-up to cents, with
 `tax_description = "FakeTax CA 7.25%"` (or `FakeTax NY no nexus`, `FakeTax OR no sales tax`).

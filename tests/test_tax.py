@@ -166,6 +166,7 @@ class TestNexusAndTaxCodes:
 
         result = compute_invoice_tax(invoice=invoice, default_rate="", workspace=_workspace(default_tax_code="SERVICE"))
 
+        assert [line.tax_code for line in result.lines] == ["FT-SOFT-200", "FT-EXEMPT-900", "FT-SVC-300"]
         assert [line.taxable for line in result.lines] == [True, False, True]
         assert [line.tax for line in result.lines] == [Decimal("6.25"), Decimal("0"), Decimal("6.25")]
 

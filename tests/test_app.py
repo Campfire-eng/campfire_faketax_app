@@ -178,16 +178,16 @@ def test_onboarding_sets_nexus_creates_the_line_field_and_returns_to_campfire(ap
     client = app_module.app.test_client()
     _authorize_browser(client)
 
-    step1 = client.post(f"/setup/{CUSTOMER_ID}", data={"nexus": ["CA", "TX"], "default_tax_code": "SERVICE"})
+    step1 = client.post(f"/setup/{CUSTOMER_ID}", data={"nexus": ["CA", "TX"], "default_tax_code": "FT-SVC-300"})
     step2 = client.post(f"/setup/{CUSTOMER_ID}/field")
     done = client.get(f"/setup/{CUSTOMER_ID}/done")
 
     assert step1.status_code == 302 and step1.headers["Location"].endswith(f"/setup/{CUSTOMER_ID}/field")
     assert step2.status_code == 302 and step2.headers["Location"].endswith(f"/setup/{CUSTOMER_ID}/done")
     assert [c["model"] for c in created] == ["accountinginvoiceline", "accountingcreditmemoline"]
-    assert created[0]["options"] == ["TAXABLE", "SAAS", "SERVICE", "EXEMPT"]
+    assert created[0]["options"][:2] == ["FT-GOODS-100", "FT-SOFT-200"] and len(created[0]["options"]) == 10
     workspace = app_module.store.workspace(customer_id=CUSTOMER_ID)
-    assert workspace.nexus == ["CA", "TX"] and workspace.default_tax_code == "SERVICE"
+    assert workspace.nexus == ["CA", "TX"] and workspace.default_tax_code == "FT-SVC-300"
     assert workspace.tax_code_field == "tax_code" and workspace.onboarded_at is not None
     assert done.status_code == 200 and b"/v2/settings/connections/apps/abc" in done.data
 
@@ -207,7 +207,7 @@ def test_manage_link_opens_the_workspace_once_and_saves_overrides(app_module: Mo
     page = client.get(f"/manage/{CUSTOMER_ID}")
     saved = client.post(
         f"/manage/{CUSTOMER_ID}",
-        data={"nexus": ["NY"], "override_NY": "8.875", "default_tax_code": "TAXABLE"},
+        data={"nexus": ["NY"], "override_NY": "8.875", "default_tax_code": "FT-GOODS-100"},
     )
     replay = client.get(f"/manage?cf_ctx={token}")
 

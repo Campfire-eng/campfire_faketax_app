@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS workspaces (
     customer_id INTEGER PRIMARY KEY,
     nexus TEXT NOT NULL DEFAULT '[]',
     overrides TEXT NOT NULL DEFAULT '{}',
-    default_tax_code TEXT NOT NULL DEFAULT 'TAXABLE',
+    default_tax_code TEXT NOT NULL DEFAULT 'FT-GOODS-100',
     tax_code_field TEXT,
     onboarded_at REAL
 );
@@ -183,7 +183,7 @@ class Store:
             customer_id=customer_id,
             nexus=nexus if nexus is not None else (current.nexus if current else []),
             overrides=overrides if overrides is not None else (current.overrides if current else {}),
-            default_tax_code=default_tax_code or (current.default_tax_code if current else "TAXABLE"),
+            default_tax_code=default_tax_code or (current.default_tax_code if current else "FT-GOODS-100"),
             tax_code_field=tax_code_field if tax_code_field is not None else (current.tax_code_field if current else None),
             onboarded_at=time.time() if onboarded else (current.onboarded_at if current else None),
         )

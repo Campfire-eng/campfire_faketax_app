@@ -8,7 +8,7 @@
 <form method="post">
   <h2>Jurisdictions</h2>
   <table>
-    <thead><tr><th>Nexus</th><th>State</th><th class="num">State rate</th><th class="num">Avg. local</th><th class="num">Combined</th><th class="num">Your override</th><th>Services</th><th>SaaS</th></tr></thead>
+    <thead><tr><th>Nexus</th><th>State</th><th class="num">State rate</th><th class="num">Avg. local</th><th class="num">Combined</th><th class="num">Your override</th><th>Services</th><th>SaaS</th><th>Digital</th><th>Shipping</th></tr></thead>
     <tbody>
     {% for j in jurisdictions %}
       <tr>
@@ -20,14 +20,16 @@
         <td class="num"><input class="rate" type="text" inputmode="decimal" name="override_{{ j.code }}" value="{{ workspace.overrides.get(j.code, '') }}" placeholder="—"></td>
         <td>{{ "yes" if j.taxes_services else "no" }}</td>
         <td>{{ "yes" if j.taxes_saas else "no" }}</td>
+        <td>{{ "yes" if j.taxes_digital else "no" }}</td>
+        <td>{{ "yes" if j.taxes_shipping else "no" }}</td>
       </tr>
     {% endfor %}
     </tbody>
   </table>
   <h2>Tax codes</h2>
   <table>
-    <thead><tr><th>Code</th><th>Meaning</th></tr></thead>
-    <tbody>{% for code in tax_codes %}<tr><td><code>{{ code.code }}</code> {{ code.label }}</td><td class="muted">{{ code.description }}</td></tr>{% endfor %}</tbody>
+    <thead><tr><th>Code</th><th>Meaning</th><th>Taxed</th></tr></thead>
+    <tbody>{% for code in tax_codes %}<tr><td><code>{{ code.code }}</code><br>{{ code.label }}</td><td class="muted">{{ code.description }}</td><td class="muted">{{ code.when }}</td></tr>{% endfor %}</tbody>
   </table>
   <p><label>Default tax code
     <select name="default_tax_code">

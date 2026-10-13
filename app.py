@@ -25,7 +25,7 @@ from flask import Flask, abort, jsonify, redirect, render_template, request, ses
 from flask.typing import ResponseReturnValue
 
 from campfire import Campfire, NotConnected, WriteOutcome
-from jurisdictions import DEFAULT_TAX_CODE, JURISDICTIONS, TAX_CODES
+from jurisdictions import DEFAULT_TAX_CODE, JURISDICTIONS, TAX_CODES, normalize_tax_code
 from security import ContextTokenError, decode_context_token, token_covers, verify_context_token, verify_signature
 from store import SIMULATE_OPTIONS, Store, WorkspaceTax
 from tax import (
@@ -403,7 +403,7 @@ def setup_field(customer_id: int) -> ResponseReturnValue:
         step=2,
         customer_id=customer_id,
         tax_codes=list(TAX_CODES.values()),
-        default_label=TAX_CODES[workspace.default_tax_code].label,
+        default_label=TAX_CODES[normalize_tax_code(workspace.default_tax_code)].label,
         error=error,
     )
 

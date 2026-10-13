@@ -14,7 +14,14 @@ def test_states_without_sales_tax() -> None:
 
 
 def test_tax_codes_follow_each_states_rules() -> None:
-    assert set(TAX_CODES) == {"TAXABLE", "SAAS", "SERVICE", "EXEMPT"}
+    assert len(TAX_CODES) == 10 and all(code.startswith("FT-") for code in TAX_CODES)
+    assert code_is_taxable(code="FT-SOFT-200", jurisdiction=JURISDICTIONS["TX"])
+    assert code_is_taxable(code="FT-SHIP-400", jurisdiction=JURISDICTIONS["NY"])
+    assert not code_is_taxable(code="FT-SHIP-400", jurisdiction=JURISDICTIONS["CA"])
+    assert not code_is_taxable(code="FT-FOOD-500", jurisdiction=JURISDICTIONS["TX"])
+    assert code_is_taxable(code="FT-SOFT-210", jurisdiction=JURISDICTIONS["CO"])
+    assert not code_is_taxable(code="FT-MED-510", jurisdiction=JURISDICTIONS["WA"])
+    # First-generation names still resolve.
     assert code_is_taxable(code="SAAS", jurisdiction=JURISDICTIONS["TX"])
     assert not code_is_taxable(code="SAAS", jurisdiction=JURISDICTIONS["CA"])
     assert code_is_taxable(code="SERVICE", jurisdiction=JURISDICTIONS["WA"])

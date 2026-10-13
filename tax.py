@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
 
-from jurisdictions import JURISDICTIONS, STATE_NAMES, Jurisdiction, code_is_taxable
+from jurisdictions import JURISDICTIONS, STATE_NAMES, TAX_CODES, Jurisdiction, code_is_taxable, normalize_tax_code
 from store import WorkspaceTax
 
 CENTS: Decimal = Decimal("0.01")
@@ -49,7 +49,7 @@ class LineTax:
     base: Decimal
     tax: Decimal
     current_tax: Decimal
-    tax_code: str = "TAXABLE"
+    tax_code: str = "FT-GOODS-100"
     taxable: bool = True
 
 
@@ -143,9 +143,9 @@ def tax_description(*, state: str | None, rate: Decimal, nexus: bool = True) -> 
 def line_tax_code(*, line: Mapping[str, Any], workspace: WorkspaceTax | None) -> str:
     """The line's tax code from the custom field onboarding created, else the workspace default."""
     if workspace is None:
-        return "TAXABLE"
+        return normalize_tax_code(None)
     value: Any = line.get(f"custom_field_{workspace.tax_code_field}") if workspace.tax_code_field else None
-    return str(value).strip().upper() if value else workspace.default_tax_code
+    return normalize_tax_code(str(value) if value else workspace.default_tax_code)
 
 
 def line_tax(*, amount: Decimal, discount: Decimal, rate: Decimal) -> Decimal:
@@ -172,7 +172,11 @@ def compute_lines_tax(
         amount: Decimal = to_decimal(line.get("amount"))
         discount: Decimal = to_decimal(line.get("discount"))
         code: str = line_tax_code(line=line, workspace=workspace)
-        taxable: bool = code_is_taxable(code=code, jurisdiction=jurisdiction) if jurisdiction else code != "EXEMPT"
+        taxable: bool = (
+            code_is_taxable(code=code, jurisdiction=jurisdiction)
+            if jurisdiction
+            else TAX_CODES[code].rule != "never"
+        )
         lines.append(
             LineTax(
                 line_id=line.get("id"),
