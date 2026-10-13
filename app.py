@@ -219,7 +219,7 @@ def callback() -> ResponseReturnValue:
     store.save_tokens(customer_id=customer_id, tokens=tokens)
     config: dict[str, str] = {**DEFAULT_INSTALL_CONFIG, **(current.get("install_config") or {}), "base_url": PUBLIC_BASE_URL}
     campfire.put_install_config(customer_id=customer_id, config=config)
-    return redirect(url_for("home", notice=f"Connected workspace {customer_id}"))
+    return redirect(url_for("home"))
 
 
 @app.get("/refresh/<int:customer_id>")
