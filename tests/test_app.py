@@ -106,6 +106,19 @@ def test_unknown_rate_opens_breakdown_frame_whose_token_still_works(app_module: 
     assert frame.status_code == 200 and frame.get_json()["rate"] is None
 
 
+def test_breakdown_frame_returns_json_when_workspace_is_not_connected(app_module: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    def _disconnected(**_kw: Any) -> None:
+        raise app_module.NotConnected("workspace is not connected")
+
+    monkeypatch.setattr(app_module.campfire, "get_invoice", _disconnected)
+    client = app_module.app.test_client()
+    payload = _slot_payload(object_ids=["11"])
+
+    frame = client.post("/frame/api/breakdown", json={"context_token": payload["context_token"], "invoice_id": 11})
+
+    assert frame.status_code == 409 and "not connected" in frame.get_json()["error"]
+
+
 def test_rejects_unsigned_slot_call(app_module: ModuleType) -> None:
     response = app_module.app.test_client().post("/slots/calculate", json=_slot_payload(object_ids=["11"]))
 

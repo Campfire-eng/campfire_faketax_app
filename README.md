@@ -31,7 +31,8 @@ Until a workspace finishes onboarding FakeTax taxes everywhere, so the demo work
 3. `cp .env.example .env` and paste `CLIENT_ID`, `CLIENT_SECRET` and `SIGNING_SECRET`.
 4. **Manifest**: paste `manifest.json` into the app's Manifest tab and save. It sets the
    app's details (redirect URL `http://localhost:3999/callback`, connect URL, the
-   `invoices:read` and `invoices:write` scopes), the allowed domain, five buttons, two panels, a
+   `invoices:read`, `invoices:write`, `credit_memos:write`, `custom_fields:write` and
+   `vendors:read` scopes), the allowed domain, five buttons, two panels, a
    sidebar section with three pages, and the invoice and credit memo event subscriptions. The app section is versioned: applying it opens a development version,
    so click **Promote** on the app page to make it live. For a private app that is immediate,
    with no review. The allowed domain, signing secret, slots and events are not versioned and
