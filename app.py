@@ -249,6 +249,11 @@ def _json_error(error: Any) -> ResponseReturnValue:
     return jsonify({"error": getattr(error, "description", str(error))}), getattr(error, "code", 400)
 
 
+@app.errorhandler(NotConnected)
+def _not_connected(_error: NotConnected) -> ResponseReturnValue:
+    return jsonify({"error": "FakeTax is not connected to this workspace. Reconnect it in FakeTax."}), 409
+
+
 @app.get("/login")
 def login() -> ResponseReturnValue:
     if _current_user() is not None:
