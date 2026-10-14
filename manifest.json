@@ -32,9 +32,6 @@
       "action_config": {
         "url_template": "http://localhost:3999/report/{{record.id}}"
       },
-      "required_scopes": [
-        "invoices:read"
-      ],
       "visible_when": [],
       "confirm_text": "",
       "order": 2,
@@ -52,10 +49,6 @@
         "url_template": "http://localhost:3999/slots/calculate",
         "timeout_ms": 8000
       },
-      "required_scopes": [
-        "invoices:read",
-        "invoices:write"
-      ],
       "visible_when": [
         {
           "field": "payment_status",
@@ -82,10 +75,6 @@
         "url_template": "http://localhost:3999/slots/calculate",
         "timeout_ms": 8000
       },
-      "required_scopes": [
-        "invoices:read",
-        "invoices:write"
-      ],
       "visible_when": [],
       "confirm_text": "",
       "order": 0,
@@ -102,9 +91,6 @@
       "action_config": {
         "url_template": "http://localhost:3999/report/{{record.id}}"
       },
-      "required_scopes": [
-        "invoices:read"
-      ],
       "visible_when": [],
       "confirm_text": "",
       "order": 0,
@@ -123,10 +109,6 @@
         "presentation": "drawer",
         "width": "lg"
       },
-      "required_scopes": [
-        "invoices:read",
-        "invoices:write"
-      ],
       "visible_when": [],
       "confirm_text": "",
       "order": 1,
@@ -144,10 +126,6 @@
         "edit"
       ],
       "url_template": "http://localhost:3999/frame/breakdown/{{record.id}}",
-      "required_scopes": [
-        "invoices:read",
-        "invoices:write"
-      ],
       "visible_when": [],
       "order": 0,
       "is_active": true
@@ -161,9 +139,6 @@
         "list"
       ],
       "url_template": "http://localhost:3999/frame/settings",
-      "required_scopes": [
-        "invoices:read"
-      ],
       "visible_when": [],
       "order": 0,
       "is_active": true
@@ -175,9 +150,6 @@
       "label": "FakeTax",
       "icon": "calculator",
       "url_template": "",
-      "required_scopes": [
-        "invoices:read"
-      ],
       "is_active": true,
       "items": [
         {
@@ -185,9 +157,6 @@
           "label": "Jurisdictions",
           "icon": "map-pin",
           "url_template": "http://localhost:3999/frame/manage",
-          "required_scopes": [
-            "invoices:read"
-          ],
           "is_active": true
         },
         {
@@ -195,9 +164,6 @@
           "label": "Tax codes",
           "icon": "tag",
           "url_template": "http://localhost:3999/frame/codes",
-          "required_scopes": [
-            "invoices:read"
-          ],
           "is_active": true
         },
         {
@@ -205,9 +171,6 @@
           "label": "Settings",
           "icon": "settings",
           "url_template": "http://localhost:3999/frame/settings",
-          "required_scopes": [
-            "invoices:read"
-          ],
           "is_active": true
         }
       ]

@@ -106,7 +106,7 @@ the login page when signed out; webhooks, frames and report links use their own 
     breakdown frame embedded in the page; the invoice list gains a **FakeTax** tab with the
     workspace's settings (default rate, auto-calculate), saved straight into install config.
 12. **Revoke**: disconnect FakeTax from the workspace in Campfire. Reload the invoice: the FakeTax
-    buttons and tabs are gone, because they only show while a grant covers their scopes.
+    buttons and tabs are gone, because they only show while the workspace is connected.
 
 ## How it maps to Campfire capabilities
 
