@@ -351,21 +351,27 @@ def connect() -> ResponseReturnValue:
     return redirect(f"{campfire.authorize_url}?{urlencode(query)}")
 
 
+def _connect_failed(message: str) -> ResponseReturnValue:
+    """Shown in place, not via a redirect home: a person who is not signed in would be bounced to /login and lose it."""
+    return render_template("message.html", title="Could not connect to Campfire", message=message), 400
+
+
 @app.get("/callback")
 def callback() -> ResponseReturnValue:
     pending: dict[str, str] | None = session.pop("oauth", None)
     if request.args.get("error"):
-        return redirect(url_for("home", error=f"Campfire returned {request.args['error']}"))
+        detail: str = request.args.get("error_description") or ""
+        return _connect_failed(f"Campfire returned {request.args['error']}" + (f": {detail}" if detail else ""))
     if not pending or request.args.get("state") != pending["state"]:
-        return redirect(url_for("home", error="state mismatch: refusing the code"))
+        return _connect_failed("state mismatch: refusing the code")
     r = campfire.exchange_code(code=request.args.get("code", ""), redirect_uri=REDIRECT_URI, verifier=pending["verifier"])
     if r.status_code != 200:
-        return redirect(url_for("home", error=f"token exchange failed: {r.status_code} {r.text}"))
+        return _connect_failed(f"token exchange failed: {r.status_code} {r.text}")
     tokens: dict[str, Any] = r.json()
     try:
         identity: dict[str, Any] = _verified_identity(id_token=tokens.get("id_token"), nonce=pending["nonce"])
     except IdTokenError as e:
-        return redirect(url_for("home", error=f"ID token rejected: {e}"))
+        return _connect_failed(f"ID token rejected: {e}")
     # The token response does not name the workspace; the install config endpoint does.
     current: dict[str, Any] = campfire.get_install_config(access_token=tokens["access_token"])
     customer_id: int = int(current["customer_id"])
