@@ -5,6 +5,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+import jwt
 import requests
 
 from store import Grant, Store
@@ -34,6 +35,8 @@ class Campfire:
         self.client_id: str = client_id
         self.client_secret: str = client_secret
         self._refresh_lock: threading.Lock = threading.Lock()
+        # Caches Campfire's public keys and refetches when an ID token names a key it has not seen.
+        self._jwks: jwt.PyJWKClient = jwt.PyJWKClient(f"{self.base_url}/.well-known/jwks.json")
 
     @property
     def token_url(self) -> str:
@@ -42,6 +45,13 @@ class Campfire:
     @property
     def authorize_url(self) -> str:
         return f"{self.base_url}/ca/oauth/authorize"
+
+    @property
+    def issuer(self) -> str:
+        return self.base_url
+
+    def id_token_signing_key(self, *, id_token: str) -> Any:
+        return self._jwks.get_signing_key_from_jwt(id_token).key
 
     def exchange_code(self, *, code: str, redirect_uri: str, verifier: str) -> requests.Response:
         return requests.post(
