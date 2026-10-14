@@ -413,6 +413,15 @@ def test_callback_refuses_an_id_token_with_the_wrong_nonce(app_module: ModuleTyp
         app_module, monkeypatch, id_token_claims={"sub": "31017", "nonce": "someone-elses"}
     )
 
-    assert "ID+token+rejected" in callback.headers["Location"]
+    assert callback.status_code == 400 and b"ID token rejected" in callback.data
     with client.session_transaction() as browser:
         assert "user" not in browser
+
+
+def test_callback_shows_campfires_error_to_a_signed_out_person(app_module: ModuleType) -> None:
+    client = app_module.app.test_client()
+
+    page = client.get("/callback?error=invalid_scope&error_description=This+app+may+not+request%3A+openid&state=x")
+
+    assert page.status_code == 400
+    assert b"invalid_scope: This app may not request: openid" in page.data
