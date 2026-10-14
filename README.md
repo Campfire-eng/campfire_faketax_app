@@ -31,8 +31,8 @@ Until a workspace finishes onboarding FakeTax taxes everywhere, so the demo work
 3. `cp .env.example .env` and paste `CLIENT_ID`, `CLIENT_SECRET` and `SIGNING_SECRET`.
 4. **Manifest**: paste `manifest.json` into the app's Manifest tab and save. It sets the
    app's details (redirect URL `http://localhost:3999/callback`, connect URL, the
-   `invoices:read`, `invoices:write`, `credit_memos:write`, `custom_fields:write` and
-   `vendors:read` scopes), the allowed domain, five buttons, two panels, a
+   `openid`, `email` and `profile` identity scopes and the `invoices:read`, `invoices:write`,
+   `credit_memos:write`, `custom_fields:write` and `vendors:read` scopes), the allowed domain, five buttons, two panels, a
    sidebar section with three pages, and the invoice and credit memo event subscriptions. The app section is versioned: applying it opens a development version,
    so click **Promote** on the app page to make it live. For a private app that is immediate,
    with no review. The allowed domain, signing secret, slots and events are not versioned and
@@ -67,10 +67,14 @@ one in `SIGNING_SECRET` (and optionally the old one in `SIGNING_SECRET_PREVIOUS`
 
 ## Signing in
 
-FakeTax has no accounts of its own. **Login with Campfire** runs the OAuth authorization; the
-callback asks Campfire who connected (`GET /ca/api/v1/oauth-app-install/config` returns the
-workspace name and the person's name and email) and signs that person in for that workspace.
-A manage link from Campfire signs in the same way. The navbar shows who is signed in and where,
+FakeTax has no accounts of its own. **Login with Campfire** is OpenID Connect on top of the
+OAuth authorization: FakeTax asks for the manifest's scopes, which include `openid email
+profile`, and sends a `nonce`. The token response then carries an RS256 `id_token`; the
+callback verifies it against Campfire's keys (`/.well-known/jwks.json`), checks `iss` (the
+Campfire base URL), `aud` (the client id), expiry and the nonce, and takes the person's `sub`,
+name and email from it. The workspace name still comes from
+`GET /ca/api/v1/oauth-app-install/config`, since an ID token describes the person, not the
+workspace. A manage link from Campfire signs in from its context token instead. The navbar shows who is signed in and where,
 with Sign out. Pages that act for a workspace (home, onboarding, manage, settings) redirect to
 the login page when signed out; webhooks, frames and report links use their own tokens.
 
@@ -178,7 +182,7 @@ the login page when signed out; webhooks, frames and report links use their own 
 | `campfire.py` | Campfire API client: token exchange, refresh, invoice read/write, install config |
 | `jurisdictions.py` | Seeded states, rates, taxability rules and tax codes |
 | `tax.py` | Pure tax rules: nexus, overrides, tax codes, state parsing, PATCH payloads, event loop guard |
-| `security.py` | Signature and context-token verification |
+| `security.py` | Signature, context-token and ID-token verification |
 | `store.py` | SQLite: grants, per-workspace tax setup, seen jti, frame sessions, settings, cached invoices |
 | `static/app-bridge.js` | The iframe side of the Campfire bridge |
 | `templates/` | Home, report, breakdown, settings, onboarding and manage pages |

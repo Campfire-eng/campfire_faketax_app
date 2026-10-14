@@ -18,6 +18,10 @@ class ContextTokenError(Exception):
     pass
 
 
+class IdTokenError(Exception):
+    pass
+
+
 def sign(*, secret: str, timestamp: str, body: bytes) -> str:
     return hmac.new(secret.encode(), timestamp.encode() + b":" + body, hashlib.sha256).hexdigest()
 
@@ -84,3 +88,21 @@ def verify_context_token(
 
 def token_covers(*, claims: Mapping[str, Any], object_type: str, object_id: str) -> bool:
     return claims.get("object_type") == object_type and object_id in [str(i) for i in claims.get("object_ids", [])]
+
+
+def verify_id_token(*, id_token: str, signing_key: Any, issuer: str, client_id: str, nonce: str) -> dict[str, Any]:
+    """An OpenID Connect ID token from Campfire: RS256 signature, issuer, audience, expiry and our nonce."""
+    try:
+        claims: dict[str, Any] = jwt.decode(
+            id_token,
+            signing_key,
+            algorithms=["RS256"],
+            audience=client_id,
+            issuer=issuer,
+            options={"require": ["sub", "exp", "iat", "aud", "iss", "nonce"]},
+        )
+    except jwt.PyJWTError as e:
+        raise IdTokenError(str(e)) from e
+    if not hmac.compare_digest(str(claims["nonce"]), nonce):
+        raise IdTokenError("nonce mismatch")
+    return claims

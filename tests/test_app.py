@@ -5,6 +5,7 @@ import uuid
 from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
+from urllib.parse import parse_qs, urlparse
 from typing import Any
 
 import jwt
@@ -357,3 +358,61 @@ def test_sidebar_pages_read_and_save_jurisdictions_with_a_nav_token(app_module: 
     assert saved.status_code == 200 and saved.get_json()["workspace"] == {
         "nexus": ["CA"], "overrides": {"CA": "8.5"}, "default_tax_code": "FT-SVC-300", "tax_code_field": None, "onboarded": False,
     }
+
+
+def _connect_and_call_back(
+    app_module: ModuleType, monkeypatch: pytest.MonkeyPatch, *, id_token_claims: dict[str, Any] | None
+) -> tuple[Any, Any, dict[str, str]]:
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    client = app_module.app.test_client()
+    connect = client.get("/connect")
+    authorize = parse_qs(urlparse(connect.headers["Location"]).query)
+    tokens: dict[str, Any] = {"access_token": "a2", "refresh_token": "r2", "expires_in": 3600}
+    if id_token_claims is not None:
+        now = int(time.time())
+        claims = {"iss": app_module.CAMPFIRE_BASE_URL, "aud": CLIENT_ID, "iat": now, "exp": now + 3600, **id_token_claims}
+        tokens["id_token"] = jwt.encode(claims, key, algorithm="RS256", headers={"kid": "k1"})
+
+    class Exchanged:
+        status_code = 200
+        text = ""
+
+        def json(self) -> dict[str, Any]:
+            return tokens
+
+    monkeypatch.setattr(app_module.campfire, "exchange_code", lambda **kw: Exchanged())
+    monkeypatch.setattr(app_module.campfire, "id_token_signing_key", lambda **kw: key.public_key())
+    monkeypatch.setattr(app_module.campfire, "get_install_config", lambda **kw: {"customer_id": CUSTOMER_ID, "customer_name": "Acme", "user": {"id": 7, "name": "Stale", "email": "old@acme.example"}, "install_config": {}})
+    monkeypatch.setattr(app_module.campfire, "put_install_config", lambda **kw: {})
+    callback = client.get(f"/callback?code=c&state={authorize['state'][0]}")
+    return client, callback, {key: values[0] for key, values in authorize.items()}
+
+
+def test_connect_asks_for_openid_with_a_nonce(app_module: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    _, _, authorize = _connect_and_call_back(app_module, monkeypatch, id_token_claims=None)
+
+    assert "openid" in authorize["scope"].split() and authorize["nonce"]
+
+
+def test_callback_signs_in_from_the_verified_id_token(app_module: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(app_module.secrets, "token_urlsafe", lambda n=None: "fixed-nonce")
+    client, callback, _ = _connect_and_call_back(
+        app_module, monkeypatch, id_token_claims={"sub": "31017", "name": "Pat", "email": "pat@acme.example", "nonce": "fixed-nonce"}
+    )
+
+    assert callback.status_code == 302 and "error" not in callback.headers["Location"]
+    with client.session_transaction() as browser:
+        assert browser["user"]["sub"] == "31017"
+        assert browser["user"]["name"] == "Pat" and browser["user"]["email"] == "pat@acme.example"
+
+
+def test_callback_refuses_an_id_token_with_the_wrong_nonce(app_module: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    client, callback, _ = _connect_and_call_back(
+        app_module, monkeypatch, id_token_claims={"sub": "31017", "nonce": "someone-elses"}
+    )
+
+    assert "ID+token+rejected" in callback.headers["Location"]
+    with client.session_transaction() as browser:
+        assert "user" not in browser

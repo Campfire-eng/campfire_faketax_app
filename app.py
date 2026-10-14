@@ -19,6 +19,7 @@ from decimal import Decimal
 from typing import Any
 from urllib.parse import urlencode
 
+import jwt
 import requests
 from dotenv import load_dotenv
 from flask import Flask, abort, jsonify, redirect, render_template, request, session, url_for
@@ -26,7 +27,15 @@ from flask.typing import ResponseReturnValue
 
 from campfire import Campfire, NotConnected, WriteOutcome
 from jurisdictions import DEFAULT_TAX_CODE, JURISDICTIONS, TAX_CODES, normalize_tax_code
-from security import ContextTokenError, decode_context_token, token_covers, verify_context_token, verify_signature
+from security import (
+    ContextTokenError,
+    IdTokenError,
+    decode_context_token,
+    token_covers,
+    verify_context_token,
+    verify_id_token,
+    verify_signature,
+)
 from store import SIMULATE_OPTIONS, Store, WorkspaceTax
 from tax import (
     TaxResult,
@@ -49,6 +58,9 @@ PORT: int = int(os.environ.get("PORT", "3999"))
 PUBLIC_BASE_URL: str = os.environ.get("PUBLIC_BASE_URL", f"http://localhost:{PORT}").rstrip("/")
 REDIRECT_URI: str = f"{PUBLIC_BASE_URL}/callback"
 DB_PATH: str = os.environ.get("DB_PATH", os.path.join(os.path.dirname(__file__), "faketax.sqlite3"))
+with open(os.path.join(os.path.dirname(__file__), "manifest.json")) as _manifest:
+    # Ask for exactly the manifest's ceiling, which includes openid so Campfire returns an ID token.
+    SCOPES: str = " ".join(json.load(_manifest)["app"]["allowed_scopes"])
 
 DEFAULT_INSTALL_CONFIG: dict[str, str] = {"default_rate": "5.00", "auto_calculate": "false", "base_url": PUBLIC_BASE_URL}
 MAX_BULK: int = 50
@@ -87,14 +99,23 @@ def login_required(view: Callable[..., ResponseReturnValue]) -> Callable[..., Re
     return wrapped
 
 
-def _sign_in(*, customer_id: int, whoami: dict[str, Any] | None, user_id: int | None = None) -> None:
+def _sign_in(
+    *,
+    customer_id: int,
+    whoami: dict[str, Any] | None,
+    user_id: int | None = None,
+    identity: dict[str, Any] | None = None,
+) -> None:
+    """``identity`` is a verified ID token; its name and email win over the install-config lookup."""
     person: dict[str, Any] = (whoami or {}).get("user") or {}
+    claims: dict[str, Any] = identity or {}
     session["user"] = {
         "customer_id": customer_id,
         "customer_name": (whoami or {}).get("customer_name") or f"Workspace {customer_id}",
         "user_id": person.get("id", user_id),
-        "name": person.get("name") or "",
-        "email": person.get("email") or "",
+        "sub": claims.get("sub"),
+        "name": claims.get("name") or person.get("name") or "",
+        "email": claims.get("email") or person.get("email") or "",
     }
     _remember_workspace(customer_id)
 
@@ -314,13 +335,16 @@ def open_screen(customer_id: int, screen: str) -> ResponseReturnValue:
 def connect() -> ResponseReturnValue:
     verifier, challenge = _pkce_pair()
     state: str = secrets.token_urlsafe(24)
-    session["oauth"] = {"state": state, "verifier": verifier}
+    nonce: str = secrets.token_urlsafe(24)
+    session["oauth"] = {"state": state, "verifier": verifier, "nonce": nonce}
     session["return_to"] = _campfire_return_url(request.args.get("return_to"))
     query: dict[str, str] = {
         "client_id": CLIENT_ID,
         "redirect_uri": REDIRECT_URI,
         "response_type": "code",
+        "scope": SCOPES,
         "state": state,
+        "nonce": nonce,
         "code_challenge": challenge,
         "code_challenge_method": "S256",
     }
@@ -338,17 +362,32 @@ def callback() -> ResponseReturnValue:
     if r.status_code != 200:
         return redirect(url_for("home", error=f"token exchange failed: {r.status_code} {r.text}"))
     tokens: dict[str, Any] = r.json()
+    try:
+        identity: dict[str, Any] = _verified_identity(id_token=tokens.get("id_token"), nonce=pending["nonce"])
+    except IdTokenError as e:
+        return redirect(url_for("home", error=f"ID token rejected: {e}"))
     # The token response does not name the workspace; the install config endpoint does.
     current: dict[str, Any] = campfire.get_install_config(access_token=tokens["access_token"])
     customer_id: int = int(current["customer_id"])
     store.save_tokens(customer_id=customer_id, tokens=tokens)
     config: dict[str, str] = {**DEFAULT_INSTALL_CONFIG, **(current.get("install_config") or {}), "base_url": PUBLIC_BASE_URL}
     campfire.put_install_config(customer_id=customer_id, config=config)
-    _sign_in(customer_id=customer_id, whoami=current)
+    _sign_in(customer_id=customer_id, whoami=current, identity=identity)
     workspace: WorkspaceTax | None = store.workspace(customer_id=customer_id)
     if workspace is None or workspace.onboarded_at is None:
         return redirect(url_for("setup_nexus", customer_id=customer_id))
     return redirect(session.get("return_to") or url_for("home"))
+
+
+def _verified_identity(*, id_token: str | None, nonce: str) -> dict[str, Any]:
+    """Who signed in, from the ID token Campfire returns because FakeTax asks for openid."""
+    if not id_token:
+        raise IdTokenError("Campfire returned no id_token; add openid to the app's scopes")
+    try:
+        key: Any = campfire.id_token_signing_key(id_token=id_token)
+    except jwt.PyJWTError as e:
+        raise IdTokenError(f"could not load Campfire's signing key: {e}") from e
+    return verify_id_token(id_token=id_token, signing_key=key, issuer=campfire.issuer, client_id=CLIENT_ID, nonce=nonce)
 
 
 def _remember_workspace(customer_id: int) -> None:
