@@ -5,9 +5,9 @@
     "description": "Sales tax for invoices and credit memos by jurisdiction, with tax codes on lines. The tax is fake; the plumbing is real.",
     "icon_url": null,
     "redirect_uris": [
-      "http://localhost:3999/callback"
+      "<APP_URL>/callback"
     ],
-    "connect_url": "http://localhost:3999/connect",
+    "connect_url": "<APP_URL>/connect",
     "allowed_scopes": [
       "openid",
       "email",
@@ -18,10 +18,10 @@
       "custom_fields:write",
       "vendors:read"
     ],
-    "manage_url": "http://localhost:3999/manage"
+    "manage_url": "<APP_URL>/manage"
   },
   "allowed_domains": [
-    "localhost"
+    "<APP_DOMAIN>"
   ],
   "slots": [
     {
@@ -33,7 +33,7 @@
       "requested_variant": "menu",
       "action_type": "link",
       "action_config": {
-        "url_template": "http://localhost:3999/report/{{record.id}}"
+        "url_template": "<APP_URL>/report/{{record.id}}"
       },
       "visible_when": [],
       "confirm_text": "",
@@ -49,7 +49,7 @@
       "requested_variant": "secondary",
       "action_type": "webhook",
       "action_config": {
-        "url_template": "http://localhost:3999/slots/calculate",
+        "url_template": "<APP_URL>/slots/calculate",
         "timeout_ms": 8000
       },
       "visible_when": [
@@ -75,7 +75,7 @@
       "requested_variant": "menu",
       "action_type": "webhook",
       "action_config": {
-        "url_template": "http://localhost:3999/slots/calculate",
+        "url_template": "<APP_URL>/slots/calculate",
         "timeout_ms": 8000
       },
       "visible_when": [],
@@ -92,7 +92,7 @@
       "requested_variant": "menu",
       "action_type": "link",
       "action_config": {
-        "url_template": "http://localhost:3999/report/{{record.id}}"
+        "url_template": "<APP_URL>/report/{{record.id}}"
       },
       "visible_when": [],
       "confirm_text": "",
@@ -108,7 +108,7 @@
       "requested_variant": "menu",
       "action_type": "iframe",
       "action_config": {
-        "url_template": "http://localhost:3999/frame/breakdown/{{record.id}}",
+        "url_template": "<APP_URL>/frame/breakdown/{{record.id}}",
         "presentation": "drawer",
         "width": "lg"
       },
@@ -128,7 +128,7 @@
         "detail",
         "edit"
       ],
-      "url_template": "http://localhost:3999/frame/breakdown/{{record.id}}",
+      "url_template": "<APP_URL>/frame/breakdown/{{record.id}}",
       "visible_when": [],
       "order": 0,
       "is_active": true
@@ -141,7 +141,7 @@
       "placements": [
         "list"
       ],
-      "url_template": "http://localhost:3999/frame/settings",
+      "url_template": "<APP_URL>/frame/settings",
       "visible_when": [],
       "order": 0,
       "is_active": true
@@ -159,21 +159,21 @@
           "key": "jurisdictions",
           "label": "Jurisdictions",
           "icon": "map-pin",
-          "url_template": "http://localhost:3999/frame/manage",
+          "url_template": "<APP_URL>/frame/manage",
           "is_active": true
         },
         {
           "key": "tax-codes",
           "label": "Tax codes",
           "icon": "tag",
-          "url_template": "http://localhost:3999/frame/codes",
+          "url_template": "<APP_URL>/frame/codes",
           "is_active": true
         },
         {
           "key": "settings",
           "label": "Settings",
           "icon": "settings",
-          "url_template": "http://localhost:3999/frame/settings",
+          "url_template": "<APP_URL>/frame/settings",
           "is_active": true
         }
       ]
@@ -188,7 +188,7 @@
         "CreditMemo.created",
         "CreditMemo.updated"
       ],
-      "endpoint_url": "http://localhost:3999/events",
+      "endpoint_url": "<APP_URL>/events",
       "is_active": true
     }
   ]

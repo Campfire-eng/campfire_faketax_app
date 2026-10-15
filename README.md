@@ -29,8 +29,9 @@ Until a workspace finishes onboarding FakeTax taxes everywhere, so the demo work
 2. **Signing secret**: on the app, rotate the signing secret and copy the `whsec_…` value (it is
    shown once).
 3. `cp .env.example .env` and paste `CLIENT_ID`, `CLIENT_SECRET` and `SIGNING_SECRET`.
-4. **Manifest**: paste `manifest.json` into the app's Manifest tab and save. It sets the
-   app's details (redirect URL `http://localhost:3999/callback`, connect URL, the
+4. **Manifest**: `cp manifest.json.example manifest.json`, replace `<APP_URL>` with FakeTax's public
+   URL (e.g. `https://abc.ngrok-free.app`) and `<APP_DOMAIN>` with its host, then paste it into the
+   app's Manifest tab and save. It sets the app's details (redirect URL `<APP_URL>/callback`, connect URL, the
    `openid`, `email` and `profile` identity scopes and the `invoices:read`, `invoices:write`,
    `credit_memos:write`, `custom_fields:write` and `vendors:read` scopes), the allowed domain, five buttons, two panels, a
    sidebar section with three pages, and the invoice and credit memo event subscriptions. The app section is versioned: applying it opens a development version,
@@ -186,5 +187,5 @@ the login page when signed out; webhooks, frames and report links use their own 
 | `store.py` | SQLite: grants, per-workspace tax setup, seen jti, frame sessions, settings, cached invoices |
 | `static/app-bridge.js` | The iframe side of the Campfire bridge |
 | `templates/` | Home, report, breakdown, settings, onboarding and manage pages |
-| `manifest.json` | The whole app: details, scopes, allowed domain, buttons, panels, events. Paste into the Manifest tab |
+| `manifest.json.example` | Template for `manifest.json` (gitignored). The whole app: details, scopes, allowed domain, buttons, panels, events. Paste into the Manifest tab |
 | `tests/` | pytest |
