@@ -22,21 +22,23 @@ from urllib.parse import urlencode
 import jwt
 import requests
 from dotenv import load_dotenv
-from flask import Flask, abort, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, Response, abort, jsonify, make_response, redirect, render_template, request, session, url_for
 from flask.typing import ResponseReturnValue
+from itsdangerous import BadData, URLSafeTimedSerializer
 
 from campfire import Campfire, NotConnected, WriteOutcome
 from jurisdictions import DEFAULT_TAX_CODE, JURISDICTIONS, TAX_CODES, normalize_tax_code
 from security import (
     ContextTokenError,
     IdTokenError,
+    MAX_AGE_SECONDS,
     decode_context_token,
     token_covers,
     verify_context_token,
     verify_id_token,
     verify_signature,
 )
-from store import SIMULATE_OPTIONS, Store, WorkspaceTax
+from store import SIMULATE_OPTIONS, FrameSession, Store, WorkspaceTax
 from tax import (
     TaxResult,
     compute_credit_memo_tax,
@@ -67,6 +69,9 @@ MAX_BULK: int = 50
 SLOW_SECONDS: int = 12
 TAXABLE_STATUSES: frozenset[str] = frozenset({"draft", "open"})
 TAX_CODE_FIELD: str = "tax_code"
+# Set on a framed page after its ``cf_ctx`` checks out; ``Partitioned`` keeps it in the jar for
+# "FakeTax embedded in Campfire", which modern browsers keep apart from FakeTax opened directly.
+FRAME_COOKIE: str = "faketax_frame"
 TAX_CODE_MODELS: tuple[str, ...] = ("accountinginvoiceline", "accountingcreditmemoline")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -75,6 +80,7 @@ log: logging.Logger = logging.getLogger("faketax")
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", secrets.token_hex(32))
 store: Store = Store(path=DB_PATH)
+frame_cookies: URLSafeTimedSerializer = URLSafeTimedSerializer(app.secret_key, salt="frame-cookie")
 campfire: Campfire = Campfire(store=store, base_url=CAMPFIRE_BASE_URL, client_id=CLIENT_ID, client_secret=CLIENT_SECRET)
 
 
@@ -239,28 +245,75 @@ def _verified_body() -> dict[str, Any]:
 
 def _claim_frame_token(*, token: str, invoice_id: str | None) -> dict[str, Any]:
     """
-    A frame makes several calls with the one context token Campfire gave it. The first call
-    claims the jti and opens a short session bound to it; later calls are let through only for
-    that open session, until the token expires. A list-page panel has no record, so it passes
-    ``invoice_id=None`` and the token must carry no record either.
+    A frame makes several calls with the one context token Campfire gave it: on the frame URL as
+    ``cf_ctx`` and again over the bridge. The first call claims the jti and opens a short session
+    bound to it; later calls are let through only for that open session, until the token expires.
+    A call with no token at all is accepted when it carries the frame cookie instead. A list-page
+    panel has no record, so it passes ``invoice_id=None`` and the token must carry no record either.
     """
+    if not token:
+        return _frame_cookie_claims(invoice_id=invoice_id)
     try:
         claims: dict[str, Any] = decode_context_token(token=token, secrets=SIGNING_SECRETS, client_id=CLIENT_ID)
     except ContextTokenError as e:
         abort(401, str(e))
     customer_id: int = int(claims["customer_id"])
     jti: str = str(claims["jti"])
-    if invoice_id is None:
-        if claims.get("object_ids"):
-            abort(403, "token is for a record, not the list page")
-    elif not token_covers(claims=claims, object_type="invoice", object_id=invoice_id):
-        abort(403, "token is not for this invoice")
-    if store.frame_session_open(jti=jti, customer_id=customer_id):
+    object_ids: list[str] = [str(i) for i in claims.get("object_ids", [])]
+    _require_frame_covers(invoice_id=invoice_id, object_ids=object_ids)
+    opened: FrameSession | None = store.frame_session(jti=jti)
+    if opened is not None and opened.customer_id == customer_id:
         return claims
     if not store.claim_jti(jti, float(claims["exp"])):
         abort(401, "context token already used")
-    store.open_frame_session(jti=jti, customer_id=customer_id, exp=float(claims["exp"]))
+    store.open_frame_session(jti=jti, customer_id=customer_id, exp=float(claims["exp"]), object_ids=object_ids)
     return claims
+
+
+def _require_frame_covers(*, invoice_id: str | None, object_ids: list[str]) -> None:
+    if invoice_id is None:
+        if object_ids:
+            abort(403, "token is for a record, not the list page")
+    elif invoice_id not in object_ids:
+        abort(403, "token is not for this invoice")
+
+
+def _frame_cookie_claims(*, invoice_id: str | None) -> dict[str, Any]:
+    """The frame session the page's own cookie names, checked against the record being asked for."""
+    try:
+        jti: str = str(frame_cookies.loads(request.cookies.get(FRAME_COOKIE, ""), max_age=MAX_AGE_SECONDS))
+    except BadData:
+        abort(401, "context token or frame cookie required")
+    opened: FrameSession | None = store.frame_session(jti=jti)
+    if opened is None:
+        abort(401, "frame session expired")
+    _require_frame_covers(invoice_id=invoice_id, object_ids=opened.object_ids)
+    return {"jti": jti, "customer_id": opened.customer_id, "object_ids": opened.object_ids}
+
+
+def _frame_page(*, template: str, record_id: str | None, context: dict[str, Any] | None = None) -> Response:
+    """
+    A page Campfire frames. Campfire puts the context token on the frame URL as ``cf_ctx``, so the
+    very first request can be verified and answered with a partitioned cookie; the page's own
+    calls then need no token. Opened without one (a direct visit), the page still works over the
+    bridge, which hands it the same token.
+    """
+    response: Response = make_response(
+        render_template(template, host_origin=CAMPFIRE_FRONTEND_ORIGIN, **(context or {}))
+    )
+    token: str = request.args.get("cf_ctx", "")
+    if token:
+        claims: dict[str, Any] = _claim_frame_token(token=token, invoice_id=record_id)
+        response.set_cookie(
+            FRAME_COOKIE,
+            frame_cookies.dumps(str(claims["jti"])),
+            max_age=max(1, int(float(claims["exp"]) - time.time())),
+            secure=True,
+            httponly=True,
+            samesite="None",
+            partitioned=True,
+        )
+    return response
 
 
 @app.errorhandler(400)
@@ -620,7 +673,7 @@ def slot_calculate() -> ResponseReturnValue:
     except NotConnected:
         return jsonify({"effects": [{"type": "toast", "level": "error", "message": "FakeTax is not connected to this workspace. Reconnect it in FakeTax."}]})
     if len(outcomes) == 1 and outcomes[0].kind == "needs_rate":
-        store.open_frame_session(jti=str(claims["jti"]), customer_id=customer_id, exp=float(claims["exp"]))
+        store.open_frame_session(jti=str(claims["jti"]), customer_id=customer_id, exp=float(claims["exp"]), object_ids=ids)
         return jsonify(
             {
                 "effects": [
@@ -659,7 +712,7 @@ def report(invoice_id: int) -> ResponseReturnValue:
 
 @app.get("/frame/breakdown/<int:invoice_id>")
 def frame_breakdown(invoice_id: int) -> ResponseReturnValue:
-    return render_template("breakdown.html", invoice_id=invoice_id, host_origin=CAMPFIRE_FRONTEND_ORIGIN)
+    return _frame_page(template="breakdown.html", record_id=str(invoice_id), context={"invoice_id": invoice_id})
 
 
 def _frame_request() -> tuple[dict[str, Any], int, int]:
@@ -717,7 +770,7 @@ def frame_api_apply() -> ResponseReturnValue:
 @app.get("/frame/settings")
 def frame_settings() -> ResponseReturnValue:
     """The list-page panel: this workspace's FakeTax settings, edited inside Campfire."""
-    return render_template("settings.html", host_origin=CAMPFIRE_FRONTEND_ORIGIN)
+    return _frame_page(template="settings.html", record_id=None)
 
 
 def _panel_request() -> tuple[dict[str, Any], int]:
@@ -729,7 +782,7 @@ def _panel_request() -> tuple[dict[str, Any], int]:
 @app.get("/frame/manage")
 def frame_manage() -> ResponseReturnValue:
     """The Jurisdictions page Campfire shows in its sidebar: the manage screen, driven by the bridge."""
-    return render_template("frame_manage.html", host_origin=CAMPFIRE_FRONTEND_ORIGIN)
+    return _frame_page(template="frame_manage.html", record_id=None)
 
 
 @app.get("/frame/codes")

@@ -360,6 +360,50 @@ def test_sidebar_pages_read_and_save_jurisdictions_with_a_nav_token(app_module: 
     }
 
 
+def test_frame_url_token_sets_a_partitioned_cookie_that_signs_the_frames_own_calls(app_module: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(app_module.campfire, "get_invoice", lambda **kw: _invoice(invoice_id=kw["invoice_id"], address="Boise, ID 83702"))
+    client = app_module.app.test_client()
+    token = _token(object_ids=["11"], surface="panel:detail")
+
+    page = client.get(f"/frame/breakdown/11?cf_ctx={token}")
+    cookie = page.headers.get("Set-Cookie", "")
+    by_cookie = client.post("/frame/api/breakdown", json={"invoice_id": 11})
+    other_invoice = client.post("/frame/api/breakdown", json={"invoice_id": 12})
+    by_bridge_token = client.post("/frame/api/breakdown", json={"context_token": token, "invoice_id": 11})
+    list_panel = client.post("/frame/api/settings", json={})
+
+    assert page.status_code == 200 and cookie.startswith("faketax_frame=")
+    assert "Secure" in cookie and "SameSite=None" in cookie and "Partitioned" in cookie and "HttpOnly" in cookie
+    assert by_cookie.status_code == 200 and by_cookie.get_json()["lines"]
+    assert other_invoice.status_code == 403
+    assert by_bridge_token.status_code == 200
+    assert list_panel.status_code == 403
+
+
+def test_sidebar_page_cookie_covers_the_workspace_and_nothing_else_is_let_in(app_module: ModuleType) -> None:
+    client = app_module.app.test_client()
+
+    refused = client.post("/frame/api/manage", json={})
+    page = client.get(f"/frame/manage?cf_ctx={_token(object_ids=[], surface='nav')}")
+    loaded = client.post("/frame/api/manage", json={})
+    forged = app_module.app.test_client()
+    forged.set_cookie("faketax_frame", "not-signed")
+
+    assert refused.status_code == 401
+    assert page.status_code == 200 and loaded.status_code == 200 and loaded.get_json()["customer_id"] == CUSTOMER_ID
+    assert forged.post("/frame/api/manage", json={}).status_code == 401
+
+
+def test_frame_url_with_a_bad_token_is_refused(app_module: ModuleType) -> None:
+    client = app_module.app.test_client()
+
+    stale = client.get("/frame/breakdown/11?cf_ctx=nope")
+    plain = client.get("/frame/breakdown/11")
+
+    assert stale.status_code == 401
+    assert plain.status_code == 200 and "Set-Cookie" not in plain.headers
+
+
 def _connect_and_call_back(
     app_module: ModuleType, monkeypatch: pytest.MonkeyPatch, *, id_token_claims: dict[str, Any] | None
 ) -> tuple[Any, Any, dict[str, str]]:
