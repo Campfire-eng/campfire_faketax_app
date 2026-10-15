@@ -2,7 +2,7 @@
 // are trusted; everything is posted to that origin only.
 (function () {
   const script = document.currentScript;
-  let hostOrigin = (script && script.dataset.hostOrigin) || "http://localhost:3000";
+  let hostOrigin = (script && script.dataset.hostOrigin) || "https://app.meetcampfire.com";
   const pending = new Map();
 
   function newId() {

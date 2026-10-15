@@ -49,8 +49,8 @@ from tax import (
 
 load_dotenv()
 
-CAMPFIRE_BASE_URL: str = os.environ.get("CAMPFIRE_BASE_URL", "http://localhost:8001").rstrip("/")
-CAMPFIRE_FRONTEND_ORIGIN: str = os.environ.get("CAMPFIRE_FRONTEND_ORIGIN", "http://localhost:3000").rstrip("/")
+CAMPFIRE_BASE_URL: str = os.environ.get("CAMPFIRE_BASE_URL", "https://api.meetcampfire.com").rstrip("/")
+CAMPFIRE_FRONTEND_ORIGIN: str = os.environ.get("CAMPFIRE_FRONTEND_ORIGIN", "https://app.meetcampfire.com").rstrip("/")
 CLIENT_ID: str = os.environ["CLIENT_ID"]
 CLIENT_SECRET: str = os.environ["CLIENT_SECRET"]
 SIGNING_SECRETS: list[str] = [s for s in (os.environ.get("SIGNING_SECRET"), os.environ.get("SIGNING_SECRET_PREVIOUS")) if s]

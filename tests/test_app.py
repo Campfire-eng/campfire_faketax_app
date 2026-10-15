@@ -183,7 +183,7 @@ def _authorize_browser(client: Any, customer_id: int = CUSTOMER_ID) -> None:
     with client.session_transaction() as browser:
         browser["workspaces"] = [customer_id]
         browser["user"] = {"customer_id": customer_id, "customer_name": "Acme", "user_id": 7, "name": "Pat", "email": "pat@acme.example"}
-        browser["return_to"] = "http://localhost:3000/v2/settings/connections/apps/abc"
+        browser["return_to"] = "https://app.meetcampfire.com/v2/settings/connections/apps/abc"
 
 
 def test_onboarding_sets_nexus_creates_the_line_field_and_returns_to_campfire(app_module: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -24,7 +24,7 @@ Until a workspace finishes onboarding FakeTax taxes everywhere, so the demo work
 
 ## Setup
 
-1. **Create the app** in Campfire (http://localhost:3000) under Developer → Apps. Only the name
+1. **Create the app** in Campfire (https://app.meetcampfire.com) under Developer → Apps. Only the name
    matters; `manifest.json` sets everything else in step 4. Copy the client id and secret.
 2. **Signing secret**: on the app, rotate the signing secret and copy the `whsec_…` value (it is
    shown once).
@@ -37,7 +37,7 @@ Until a workspace finishes onboarding FakeTax taxes everywhere, so the demo work
    so click **Promote** on the app page to make it live. For a private app that is immediate,
    with no review. The allowed domain, signing secret, slots and events are not versioned and
    take effect as soon as the manifest is saved.
-5. **Feature flag**: in Django admin (http://localhost:8001/admin), give the workspace the
+5. **Feature flag**: in Django admin (https://api.meetcampfire.com/admin), give the workspace the
    `oauth_app_extensions` customer feature flag. Without it no slot shows and no event is sent.
 6. Run it:
 
