@@ -90,9 +90,10 @@ the login page when signed out; webhooks, frames and report links use their own 
 3. **Calculate tax**: confirm "Overwrite tax on every line?". Campfire posts a signed webhook to
    `/slots/calculate`; FakeTax reads the invoice, writes 7.25% on every line and answers with a
    success toast and a refresh, so the new tax shows straight away.
-4. **Tax breakdown** opens FakeTax in a drawer. The frame asks Campfire for its context over the
-   bridge, shows the lines, lets you override the rate and **Apply**; it then toasts, refreshes the
-   invoice and closes itself.
+4. **Tax breakdown** opens FakeTax in a drawer. The frame URL carries a `cf_ctx` token; FakeTax
+   verifies it on that first request and sets a partitioned cookie, so the frame's own calls need
+   no token. The page also asks Campfire for its context over the bridge, shows the lines, lets
+   you override the rate and **Apply**; it then toasts, refreshes the invoice and closes itself.
 5. **View in FakeTax** opens `/report/<id>?cf_ctx=…` in a new tab: a per-line report, shown only
    after the context token checks out. Reload the tab and it refuses: the token is single use.
 6. **List bulk**: on the invoice list, select several invoices and choose **Calculate FakeTax**
@@ -122,14 +123,14 @@ the login page when signed out; webhooks, frames and report links use their own 
 | Link slot, row menu | `open-row` | same | The same link from a list row |
 | Webhook slot, detail header | `calculate` | `POST /slots/calculate` | Signed request, `visible_when`, `confirm_text`, `toast` + `refresh` effects, `open_iframe` when it needs input |
 | Webhook slot, list header | `calculate-bulk` | same | Up to 50 selected ids in one call; partial success summarised in one toast |
-| Iframe slot, drawer | `breakdown` | `GET /frame/breakdown/<id>`, `POST /frame/api/*` | `static/app-bridge.js`: `ready` → context, `toast`, `refresh`, `resize`, `close` |
-| Panel, detail page and edit modal | `breakdown-tab` | `GET /frame/breakdown/<id>` | The breakdown frame embedded as a tab; same bridge, no drawer |
-| Panel, list page | `settings` | `GET /frame/settings`, `POST /frame/api/settings[/save]` | A token with no record; settings written to install config from inside Campfire |
+| Iframe slot, drawer | `breakdown` | `GET /frame/breakdown/<id>?cf_ctx=`, `POST /frame/api/*` | The frame URL's `cf_ctx` verified on the first request and answered with a partitioned cookie (`Secure; SameSite=None; Partitioned`); `static/app-bridge.js`: `ready` → context, `toast`, `refresh`, `resize`, `close` |
+| Panel, detail page and edit modal | `breakdown-tab` | `GET /frame/breakdown/<id>?cf_ctx=` | The breakdown frame embedded as a tab; same cookie and bridge, no drawer |
+| Panel, list page | `settings` | `GET /frame/settings?cf_ctx=`, `POST /frame/api/settings[/save]` | A token with no record; settings written to install config from inside Campfire |
 | Event subscription | `event_subscriptions` | `POST /events` | Signed thin events; FakeTax re-reads the invoice with its own token |
 | Install config | (none) | `GET/PUT /ca/api/v1/oauth-app-install/config` | Per-workspace `default_rate`, `auto_calculate`, `base_url` set by the app's own token |
 | Onboarding | `connect_url` + `return_to` | `/setup/<workspace>` (3 steps) | Nexus, default tax code, custom field creation with the app token, return to Campfire |
 | Manage link | `manage_url` | `GET /manage?cf_ctx=`, `/manage/<workspace>` | Signed entry from the connection page; single-use token, then a browser session |
-| Sidebar section | `navigation` | `GET /frame/manage`, `/frame/codes`, `/frame/settings` | A **FakeTax** section in Campfire's sidebar with Jurisdictions, Tax codes and Settings pages, each opened full-width with a `surface: "nav"` token |
+| Sidebar section | `navigation` | `GET /frame/manage?cf_ctx=`, `/frame/codes`, `/frame/settings?cf_ctx=` | A **FakeTax** section in Campfire's sidebar with Jurisdictions, Tax codes and Settings pages, each opened full-width with a `surface: "nav"` token |
 | Credit memos | `event_subscriptions` | `POST /events` → `GET/PATCH /coa/api/v1/credit-memo/<id>` | Client address (`GET /coa/api/vendor/<id>`, scope `vendors:read`) picks the jurisdiction |
 | OAuth connect + refresh | app settings | `/connect`, `/callback`, `/refresh/<id>` | PKCE, refresh on expiry or 401, grant dropped when refresh is refused |
 
@@ -167,11 +168,17 @@ the login page when signed out; webhooks, frames and report links use their own 
 
 - Slot webhooks and events: HMAC-SHA256 over `"{timestamp}:{raw body}"`, checked against
   `Campfire-Webhook-Signature-v1` and `-Previous`, refused when the timestamp is more than 300s off.
-- Context tokens are single use (`seen_jti` table). The iframe needs several calls with the one
-  token Campfire gives it, so its first call claims the `jti` and opens a server-side frame session
-  bound to it and the workspace; later calls are accepted only while that session and the token
-  are live. When the calculate webhook answers with `open_iframe`, Campfire hands the frame the
-  webhook's own token, so FakeTax opens the frame session for that `jti` before replying.
+- Context tokens are single use (`seen_jti` table). A frame gets one token twice: on its URL as
+  `cf_ctx` and again over the bridge. The first request with it claims the `jti` and opens a
+  server-side frame session bound to it, the workspace and the record ids; later calls are
+  accepted only while that session and the token are live. When the calculate webhook answers
+  with `open_iframe`, Campfire hands the frame the webhook's own token, so FakeTax opens the frame
+  session for that `jti` before replying.
+- A framed page answers a good `cf_ctx` with a `faketax_frame` cookie (signed, `HttpOnly`,
+  `Secure`, `SameSite=None`, `Partitioned`) naming that frame session, so the page's own requests
+  are authenticated without threading the token through each one. Browsers keep third-party
+  cookies out of iframes; `Partitioned` gives "FakeTax inside Campfire" a cookie jar of its own,
+  separate from FakeTax opened directly. Calls that carry neither a token nor the cookie get `401`.
 - The bridge only accepts messages from `CAMPFIRE_FRONTEND_ORIGIN` sent by the parent window, and
   posts only to that origin.
 

@@ -21,7 +21,8 @@ CREATE TABLE IF NOT EXISTS seen_jti (jti TEXT PRIMARY KEY, exp REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS frame_sessions (
     jti TEXT PRIMARY KEY,
     customer_id INTEGER NOT NULL,
-    exp REAL NOT NULL
+    exp REAL NOT NULL,
+    object_ids TEXT NOT NULL DEFAULT '[]'
 );
 CREATE TABLE IF NOT EXISTS settings (
     customer_id INTEGER PRIMARY KEY,
@@ -45,6 +46,12 @@ CREATE TABLE IF NOT EXISTS invoices (
 """
 
 SIMULATE_OPTIONS: tuple[str, ...] = ("none", "500", "slow")
+
+
+@dataclass(frozen=True)
+class FrameSession:
+    customer_id: int
+    object_ids: list[str]
 
 
 @dataclass(frozen=True)
@@ -75,6 +82,9 @@ class Store:
         self.path: str = path
         with self._db() as db:
             db.executescript(SCHEMA)
+            columns: set[str] = {row["name"] for row in db.execute("PRAGMA table_info(frame_sessions)")}
+            if "object_ids" not in columns:
+                db.execute("ALTER TABLE frame_sessions ADD COLUMN object_ids TEXT NOT NULL DEFAULT '[]'")
 
     @contextmanager
     def _db(self) -> Iterator[sqlite3.Connection]:
@@ -125,20 +135,20 @@ class Store:
             cursor = db.execute("INSERT OR IGNORE INTO seen_jti (jti, exp) VALUES (?, ?)", (jti, exp))
             return cursor.rowcount == 1
 
-    def open_frame_session(self, *, jti: str, customer_id: int, exp: float) -> None:
+    def open_frame_session(self, *, jti: str, customer_id: int, exp: float, object_ids: list[str]) -> None:
         with self._db() as db:
             db.execute(
-                "INSERT OR REPLACE INTO frame_sessions (jti, customer_id, exp) VALUES (?, ?, ?)",
-                (jti, customer_id, exp),
+                "INSERT OR REPLACE INTO frame_sessions (jti, customer_id, exp, object_ids) VALUES (?, ?, ?, ?)",
+                (jti, customer_id, exp, json.dumps(object_ids)),
             )
 
-    def frame_session_open(self, *, jti: str, customer_id: int) -> bool:
+    def frame_session(self, *, jti: str) -> FrameSession | None:
         with self._db() as db:
             db.execute("DELETE FROM frame_sessions WHERE exp < ?", (time.time(),))
-            row = db.execute(
-                "SELECT 1 FROM frame_sessions WHERE jti = ? AND customer_id = ?", (jti, customer_id)
-            ).fetchone()
-        return row is not None
+            row = db.execute("SELECT customer_id, object_ids FROM frame_sessions WHERE jti = ?", (jti,)).fetchone()
+        if row is None:
+            return None
+        return FrameSession(customer_id=int(row["customer_id"]), object_ids=[str(i) for i in json.loads(row["object_ids"])])
 
     def simulate_failure(self, *, customer_id: int) -> str:
         with self._db() as db:
