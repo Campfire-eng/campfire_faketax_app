@@ -2,6 +2,7 @@
   "app": {
     "name": "FakeTax",
     "tagline": "Made-up sales tax on invoices",
+    "category": "tax",
     "description": "Sales tax for invoices and credit memos by jurisdiction, with tax codes on lines. The tax is fake; the plumbing is real.",
     "icon_url": null,
     "redirect_uris": [
