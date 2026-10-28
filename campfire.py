@@ -3,6 +3,7 @@
 import threading
 import time
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any
 
 import jwt
@@ -15,6 +16,16 @@ INVOICE_PATH: str = "/coa/api/v1/invoice/{id}/"
 CREDIT_MEMO_PATH: str = "/coa/api/v1/credit-memo/{id}"
 VENDOR_PATH: str = "/coa/api/vendor/{id}"
 CUSTOM_FIELDS_PATH: str = "/ca/api/v1/custom-fields"
+TAX_RATE_PATH: str = "/coa/api/tax_rate"
+ACCOUNT_PATH: str = "/coa/api/account"
+# One liability account per component, shared by every jurisdiction, so the ledger shows the split.
+TAX_ACCOUNTS: dict[str, str] = {
+    "state": "FakeTax State Tax Payable",
+    "county": "FakeTax County Tax Payable",
+    "supplemental": "FakeTax Supplemental Tax Payable",
+}
+# Account numbers are required; FakeTax takes the first free ones after the usual sales tax payable.
+FIRST_TAX_ACCOUNT_NUMBER: int = 236110
 INSTALL_CONFIG_PATH: str = "/ca/api/v1/oauth-app-install/config"
 
 
@@ -83,13 +94,15 @@ class Campfire:
                 raise NotConnected(f"refresh failed: {r.status_code} {r.text[:200]}")
             self.store.save_tokens(customer_id=customer_id, tokens=r.json())
 
-    def request_with_token(self, *, access_token: str, method: str, path: str, json: Any = None) -> requests.Response:
+    def request_with_token(
+        self, *, access_token: str, method: str, path: str, json: Any = None, timeout: float = 15
+    ) -> requests.Response:
         return requests.request(
             method,
             f"{self.base_url}{path}",
             headers={"Authorization": f"Bearer {access_token}"},
             json=json,
-            timeout=15,
+            timeout=timeout,
         )
 
     def _grant(self, *, customer_id: int) -> Grant:
@@ -98,17 +111,23 @@ class Campfire:
             raise NotConnected(f"workspace {customer_id} is not connected")
         return grant
 
-    def request(self, *, customer_id: int, method: str, path: str, json: Any = None) -> requests.Response:
+    def request(
+        self, *, customer_id: int, method: str, path: str, json: Any = None, timeout: float = 15
+    ) -> requests.Response:
         grant: Grant = self._grant(customer_id=customer_id)
         if grant.expires_at - 30 < time.time():
             self.refresh(customer_id=customer_id)
             grant = self._grant(customer_id=customer_id)
-        r = self.request_with_token(access_token=grant.access_token, method=method, path=path, json=json)
+        r = self.request_with_token(
+            access_token=grant.access_token, method=method, path=path, json=json, timeout=timeout
+        )
         if r.status_code != 401:
             return r
         self.refresh(customer_id=customer_id)
         grant = self._grant(customer_id=customer_id)
-        return self.request_with_token(access_token=grant.access_token, method=method, path=path, json=json)
+        return self.request_with_token(
+            access_token=grant.access_token, method=method, path=path, json=json, timeout=timeout
+        )
 
     def get_invoice(self, *, customer_id: int, invoice_id: int) -> dict[str, Any] | None:
         r = self.request(customer_id=customer_id, method="GET", path=INVOICE_PATH.format(id=invoice_id))
@@ -213,6 +232,88 @@ class Campfire:
         created: dict[str, Any] = r.json()
         return created
 
+    def ensure_tax_accounts(self, *, customer_id: int, timeout: float = 15) -> dict[str, int]:
+        """The three FakeTax liability accounts by component, created on first use."""
+        r = self.request(
+            customer_id=customer_id, method="GET", path=f"{ACCOUNT_PATH}?account_type=LIABILITY", timeout=timeout
+        )
+        r.raise_for_status()
+        liabilities: list[dict[str, Any]] = _results(r.json())
+        by_name: dict[str, int] = {str(row.get("name")): int(row["id"]) for row in liabilities}
+        taken: set[str] = {str(row.get("number")) for row in liabilities}
+        number: int = FIRST_TAX_ACCOUNT_NUMBER
+        accounts: dict[str, int] = {}
+        for component, name in TAX_ACCOUNTS.items():
+            if name not in by_name:
+                while str(number) in taken:
+                    number += 10
+                taken.add(str(number))
+                created = self.request(
+                    customer_id=customer_id,
+                    method="POST",
+                    path=ACCOUNT_PATH,
+                    json={
+                        "name": name,
+                        "number": str(number),
+                        "account_type": "LIABILITY",
+                        "account_subtype": "OTHER_CURRENT_LIABILITY",
+                        "description": f"Sales tax collected by FakeTax, {component} share.",
+                    },
+                    timeout=timeout,
+                )
+                created.raise_for_status()
+                by_name[name] = int(created.json()["id"])
+            accounts[component] = by_name[name]
+        return accounts
+
+    def ensure_tax_rate(self, *, customer_id: int, result: TaxResult, timeout: float = 15) -> int:
+        """
+        The Campfire tax rate for ``result``'s jurisdiction and percentage, with one line per
+        component on its own account, created or brought up to date; the id goes on the lines.
+        """
+        if result.components is None or result.rate is None:
+            raise ValueError("nothing to book")
+        wanted: list[tuple[str, str, Decimal]] = [
+            (component, f"{result.description} {component}", getattr(result.components, component))
+            for component in TAX_ACCOUNTS
+        ]
+        listed = self.request(
+            customer_id=customer_id, method="GET", path=f"{TAX_RATE_PATH}?q=FakeTax&limit=500", timeout=timeout
+        )
+        listed.raise_for_status()
+        existing: dict[str, Any] | None = next(
+            (row for row in _results(listed.json()) if row.get("code") == result.rate_code), None
+        )
+        current_lines: list[dict[str, Any]] = list((existing or {}).get("lines") or [])
+        if existing is not None and _lines_match(current_lines=current_lines, wanted=wanted):
+            return int(existing["id"])
+        accounts: dict[str, int] = self.ensure_tax_accounts(customer_id=customer_id, timeout=timeout)
+        lines: list[dict[str, Any]] = [
+            {"description": description, "rate": str(rate / Decimal("100")), "tax_account": accounts[component]}
+            for component, description, rate in wanted
+        ]
+        for line, current in zip(lines, current_lines, strict=False):
+            line["id"] = current.get("id")
+        body: dict[str, Any] = {
+            "name": result.description,
+            "code": result.rate_code,
+            "type": "receivable",
+            "description": f"FakeTax {result.state or 'default'} rate: state, county and supplemental shares.",
+            "lines": lines,
+        }
+        if existing is not None:
+            r = self.request(
+                customer_id=customer_id,
+                method="PATCH",
+                path=f"{TAX_RATE_PATH}/{existing['id']}",
+                json=body,
+                timeout=timeout,
+            )
+        else:
+            r = self.request(customer_id=customer_id, method="POST", path=TAX_RATE_PATH, json=body, timeout=timeout)
+        r.raise_for_status()
+        return int(r.json()["id"])
+
     def get_install_config(self, *, access_token: str) -> dict[str, Any]:
         r = self.request_with_token(access_token=access_token, method="GET", path=INSTALL_CONFIG_PATH)
         r.raise_for_status()
@@ -227,6 +328,22 @@ class Campfire:
         saved: dict[str, str] = r.json()["install_config"]
         self.store.save_install_config(customer_id=customer_id, config=saved)
         return saved
+
+
+def _results(body: Any) -> list[dict[str, Any]]:
+    rows: Any = body.get("results", body) if isinstance(body, dict) else body
+    return list(rows or [])
+
+
+def _lines_match(*, current_lines: list[dict[str, Any]], wanted: list[tuple[str, str, Decimal]]) -> bool:
+    if len(current_lines) != len(wanted):
+        return False
+    return all(
+        line.get("description") == description
+        and line.get("tax_account") is not None
+        and Decimal(str(line.get("rate"))) == rate / Decimal("100")
+        for line, (_component, description, rate) in zip(current_lines, wanted, strict=True)
+    )
 
 
 def _is_draft_queue(r: requests.Response) -> bool:

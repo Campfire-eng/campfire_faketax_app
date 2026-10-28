@@ -7,13 +7,16 @@ from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
 
 from jurisdictions import (
+    DEFAULT_JURISDICTION,
     JURISDICTIONS,
     STATE_NAMES,
     TAX_CODES,
     Jurisdiction,
+    TaxComponents,
     classify_line_text,
     code_is_taxable,
     normalize_tax_code,
+    split_rate,
 )
 from store import WorkspaceTax
 
@@ -21,7 +24,7 @@ CENTS: Decimal = Decimal("0.01")
 
 # Fields FakeTax's own write changes; an update touching only these is our echo, not a user edit.
 SELF_WRITTEN_FIELDS: frozenset[str] = frozenset(
-    {"tax", "tax_description", "total_amount", "last_modified_at", "updated_at"}
+    {"tax", "tax_rate", "tax_description", "total_amount", "last_modified_at", "updated_at"}
 )
 
 # Line fields sent back on PATCH. Campfire replaces every line on a lines write, so anything
@@ -38,6 +41,7 @@ WRITABLE_LINE_FIELDS: tuple[str, ...] = (
     "discount",
     "discount_percentage",
     "department",
+    "tax_rate",
     "withholding_tax_rate",
     "entity_use_code",
 )
@@ -47,7 +51,14 @@ _COMMA_STATE_RE = re.compile(r",\s*([A-Za-z]{2})\b")
 
 
 # Credit memo lines carry fewer fields than invoice lines; the same replace-all rule applies.
-WRITABLE_CREDIT_MEMO_LINE_FIELDS: tuple[str, ...] = ("product", "account", "description", "amount", "department")
+WRITABLE_CREDIT_MEMO_LINE_FIELDS: tuple[str, ...] = (
+    "product",
+    "account",
+    "description",
+    "amount",
+    "department",
+    "tax_rate",
+)
 
 
 @dataclass(frozen=True)
@@ -71,10 +82,19 @@ class TaxResult:
     lines: list[LineTax]
     # False when the workspace has no nexus in the state: the rate is then 0, not unknown.
     nexus: bool = True
+    # The rate as state + county + supplemental, None when nothing is taxed.
+    components: TaxComponents | None = None
+    # The Campfire tax rate carrying those components, once it has been created or found.
+    tax_rate_id: int | None = None
 
     @property
     def needs_rate(self) -> bool:
         return self.rate is None
+
+    @property
+    def rate_code(self) -> str:
+        """Campfire ``TaxRate.code``: one rate per jurisdiction and combined percentage."""
+        return f"FAKETAX-{self.state or DEFAULT_JURISDICTION.code}-{self.rate or Decimal('0'):.3f}"
 
     @property
     def total_tax(self) -> Decimal:
@@ -198,6 +218,9 @@ def compute_lines_tax(
         else resolve_rate(state=state, default_rate=default_rate, workspace=workspace)
     )
     jurisdiction: Jurisdiction | None = JURISDICTIONS.get(state or "")
+    components: TaxComponents | None = (
+        split_rate(total=rate, like=jurisdiction or DEFAULT_JURISDICTION) if rate is not None and rate > 0 else None
+    )
     lines: list[LineTax] = []
     for line in lines_in:
         amount: Decimal = to_decimal(line.get("amount"))
@@ -226,6 +249,7 @@ def compute_lines_tax(
         description=tax_description(state=state, rate=rate, nexus=nexus) if rate is not None else "",
         lines=lines,
         nexus=nexus,
+        components=components,
     )
 
 
@@ -266,6 +290,11 @@ def _line_payload(
     item["tags"] = [{"id": tag["id"]} if isinstance(tag, dict) else tag for tag in line.get("tags") or []]
     item["tax"] = str(computed.tax)
     item["tax_description"] = result.description
+    if result.tax_rate_id is not None and result.rate is not None:
+        item["tax_rate"] = result.tax_rate_id
+        # Read-only in Campfire; the create and edit forms show them when a preview fills the lines in.
+        item["tax_rate_name"] = result.description
+        item["tax_rate_value"] = str(result.rate / Decimal("100"))
     field: str | None = tax_code_field or (TAX_CODE_FIELD if f"custom_field_{TAX_CODE_FIELD}" in line else None)
     if field and computed.code_assigned:
         item[f"custom_field_{field}"] = computed.tax_code

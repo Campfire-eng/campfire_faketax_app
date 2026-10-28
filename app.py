@@ -13,7 +13,7 @@ import secrets
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import wraps
 from decimal import Decimal
 from typing import Any
@@ -44,6 +44,7 @@ from tax import (
     compute_credit_memo_tax,
     compute_invoice_tax,
     is_self_echo,
+    lines_payload,
     parse_rate,
     state_from_address,
     vendor_address,
@@ -67,6 +68,8 @@ with open(os.path.join(os.path.dirname(__file__), "manifest.json")) as _manifest
 DEFAULT_INSTALL_CONFIG: dict[str, str] = {"default_rate": "5.00", "auto_calculate": "false", "base_url": PUBLIC_BASE_URL}
 MAX_BULK: int = 50
 SLOW_SECONDS: int = 12
+# Each Campfire call made while answering a hook, inside the hook's own 5-second budget.
+HOOK_API_TIMEOUT_SECONDS: float = 2.0
 TAXABLE_STATUSES: frozenset[str] = frozenset({"draft", "open"})
 TAX_CODE_FIELD: str = "tax_code"
 # Set on a framed page after its ``cf_ctx`` checks out; ``Partitioned`` keeps it in the jar for
@@ -145,6 +148,21 @@ def _default_rate(*, customer_id: int) -> str:
     return (grant.install_config if grant else DEFAULT_INSTALL_CONFIG).get("default_rate", "")
 
 
+def _with_tax_rate(*, customer_id: int, result: TaxResult, timeout: float = 15) -> TaxResult:
+    """
+    Resolve the Campfire tax rate (state + county + supplemental lines) the result books against.
+    When Campfire cannot be reached the lines still get the flat tax amount, just not the rate.
+    """
+    if result.components is None:
+        return result
+    try:
+        tax_rate_id: int = campfire.ensure_tax_rate(customer_id=customer_id, result=result, timeout=timeout)
+    except (NotConnected, requests.RequestException) as e:
+        log.warning("tax rate %s not available, writing flat tax: %s", result.rate_code, e)
+        return result
+    return replace(result, tax_rate_id=tax_rate_id)
+
+
 def calculate_invoice(
     *, customer_id: int, invoice_id: int, rate_override: Decimal | None = None, only_if_changed: bool = False
 ) -> InvoiceOutcome:
@@ -167,6 +185,7 @@ def calculate_invoice(
     if only_if_changed and result.already_applied:
         return InvoiceOutcome(invoice_id=invoice_id, kind="unchanged")
     workspace: WorkspaceTax | None = store.workspace(customer_id=customer_id)
+    result = _with_tax_rate(customer_id=customer_id, result=result)
     outcome: WriteOutcome = campfire.write_tax(
         customer_id=customer_id,
         invoice=invoice,
@@ -198,6 +217,7 @@ def calculate_credit_memo(*, customer_id: int, memo_id: int) -> InvoiceOutcome:
     if result.already_applied:
         return InvoiceOutcome(invoice_id=memo_id, kind="unchanged")
     workspace: WorkspaceTax | None = store.workspace(customer_id=customer_id)
+    result = _with_tax_rate(customer_id=customer_id, result=result)
     outcome: WriteOutcome = campfire.write_credit_memo_tax(
         customer_id=customer_id, memo=memo, result=result, tax_code_field=workspace.tax_code_field if workspace else None
     )
@@ -807,6 +827,8 @@ def _manage_payload(*, customer_id: int) -> dict[str, Any]:
                 "code": j.code,
                 "name": j.name,
                 "state_rate": str(j.state_rate),
+                "county_rate": str(j.county_rate),
+                "supplemental_rate": str(j.supplemental_rate),
                 "local_rate": str(j.local_rate),
                 "combined_rate": str(j.combined_rate),
                 "has_sales_tax": j.has_sales_tax,
@@ -878,6 +900,59 @@ def frame_api_settings_save() -> ResponseReturnValue:
     except (NotConnected, requests.HTTPError) as e:
         return jsonify({"level": "error", "message": f"Could not save to Campfire: {e}"}), 502
     return jsonify({"level": "success", "message": "FakeTax settings saved.", "install_config": saved})
+
+
+@app.post("/hooks")
+def hooks() -> ResponseReturnValue:
+    """
+    Campfire calls this before an invoice is created or updated, with the payload about to be
+    saved. FakeTax puts tax on every line, pointed at a Campfire tax rate whose state, county and
+    supplemental lines each post to their own account, and hands the payload back, so the record
+    is saved with tax already on it; the same endpoint answers the form's Preview tax button
+    (``preview: true``).
+    A rejection is only used to refuse an invoice that ships to a state with no nexus when the
+    workspace's install config has ``reject_without_nexus`` set.
+    """
+    body: dict[str, Any] = _verified_body()
+    customer_id: int = int(body["customer"]["id"])
+    payload: Any = body.get("payload")
+    if body.get("object_type") != "invoice" or body.get("action") not in ("create", "update"):
+        return jsonify({})
+    if not isinstance(payload, dict) or not isinstance(payload.get("lines"), list):
+        return jsonify({})
+    simulate: str = store.simulate_failure(customer_id=customer_id)
+    if simulate == "500":
+        return jsonify({"error": "simulated failure"}), 500
+    if simulate == "slow":
+        time.sleep(SLOW_SECONDS)
+    workspace: WorkspaceTax | None = store.workspace(customer_id=customer_id)
+    result: TaxResult = compute_invoice_tax(
+        invoice=payload, default_rate=_default_rate(customer_id=customer_id), workspace=workspace
+    )
+    grant = store.grant(customer_id=customer_id)
+    reject_without_nexus: bool = (grant.install_config if grant else {}).get("reject_without_nexus") == "true"
+    if result.state and not result.nexus and reject_without_nexus:
+        return jsonify({"reject": {"message": f"FakeTax has no nexus in {result.state}; pick another ship-to state."}})
+    if result.needs_rate or not result.lines:
+        return jsonify({})
+    result = _with_tax_rate(customer_id=customer_id, result=result, timeout=HOOK_API_TIMEOUT_SECONDS)
+    lines: list[dict[str, Any]] = [
+        {**line, **taxed}
+        for line, taxed in zip(
+            payload["lines"],
+            lines_payload(invoice=payload, result=result, tax_code_field=workspace.tax_code_field if workspace else None),
+            strict=True,
+        )
+    ]
+    log.info(
+        "hook %s%s: %s on %d lines (tax rate %s)",
+        body.get("topic"),
+        " (preview)" if body.get("preview") else "",
+        result.description,
+        len(lines),
+        result.tax_rate_id,
+    )
+    return jsonify({"payload": {**payload, "lines": lines}})
 
 
 @app.post("/events")
