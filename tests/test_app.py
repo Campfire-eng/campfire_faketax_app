@@ -3,6 +3,7 @@ import json
 import time
 import uuid
 from collections.abc import Iterator
+from decimal import Decimal
 from pathlib import Path
 from types import ModuleType
 from urllib.parse import parse_qs, urlparse
@@ -10,8 +11,10 @@ from typing import Any
 
 import jwt
 import pytest
+import requests
 
 from campfire import WriteOutcome
+from jurisdictions import TaxComponents
 from security import SIGNATURE_HEADER, TIMESTAMP_HEADER, sign
 
 SECRET = "whsec_" + "s" * 40
@@ -30,6 +33,8 @@ def app_module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Modu
     module = importlib.reload(module)
     module.store.save_tokens(customer_id=CUSTOMER_ID, tokens={"access_token": "a", "refresh_token": "r", "expires_in": 3600})
     module.store.save_install_config(customer_id=CUSTOMER_ID, config={"default_rate": "5.00", "auto_calculate": "true"})
+    # Tax rates are upserted through Campfire's API; tests that care replace this stub.
+    monkeypatch.setattr(module.campfire, "ensure_tax_rate", lambda **kw: 77)
     yield module
 
 
@@ -150,6 +155,75 @@ def test_report_refuses_other_invoice(app_module: ModuleType) -> None:
     response = app_module.app.test_client().get(f"/report/99?cf_ctx={_token(object_ids=['11'])}")
 
     assert response.status_code == 403
+
+
+def test_hook_puts_tax_on_the_payload_before_it_is_saved(app_module: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    ensured: list[dict[str, Any]] = []
+    monkeypatch.setattr(app_module.campfire, "ensure_tax_rate", lambda **kw: ensured.append(kw) or 77)
+    client = app_module.app.test_client()
+    payload = {
+        "client": 9,
+        "shipping_address": "1 Main St\nOakland, CA 94607",
+        "lines": [{"product": 3, "amount": "100.00", "discount": "0", "tax": "0", "tags": []}],
+    }
+
+    response = _signed_post(
+        client,
+        "/hooks",
+        {
+            "kind": "hook", "topic": "Invoice.create", "object_type": "invoice", "action": "create", "id": None,
+            "payload": payload, "current": None, "user": {"id": 7}, "customer": {"id": CUSTOMER_ID},
+        },
+    )
+
+    assert response.status_code == 200
+    returned = response.get_json()["payload"]
+    assert returned["client"] == 9 and returned["lines"][0]["tax"] == "7.25"
+    assert returned["lines"][0]["tax_description"].startswith("FakeTax CA")
+    assert returned["lines"][0]["tax_rate"] == 77 and returned["lines"][0]["tax_rate_value"] == "0.0725"
+    assert ensured[0]["timeout"] == app_module.HOOK_API_TIMEOUT_SECONDS
+    assert ensured[0]["result"].components == TaxComponents(state=Decimal("6.00"), county=Decimal("0.25"), supplemental=Decimal("1.00"))
+
+    ignored = _signed_post(client, "/hooks", {"topic": "Invoice.delete", "object_type": "invoice", "action": "delete", "payload": None, "customer": {"id": CUSTOMER_ID}})
+    assert ignored.get_json() == {}
+
+
+def test_hook_keeps_the_flat_tax_when_the_campfire_rate_cannot_be_resolved(app_module: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    def unreachable(**kw: Any) -> int:
+        raise requests.ConnectionError("campfire is down")
+
+    monkeypatch.setattr(app_module.campfire, "ensure_tax_rate", unreachable)
+
+    response = _signed_post(
+        app_module.app.test_client(),
+        "/hooks",
+        {
+            "topic": "Invoice.create", "object_type": "invoice", "action": "create", "id": None,
+            "payload": {"shipping_address": "Oakland, CA 94607", "lines": [{"amount": "100.00", "discount": "0", "tags": []}]},
+            "customer": {"id": CUSTOMER_ID},
+        },
+    )
+
+    line = response.get_json()["payload"]["lines"][0]
+    assert line["tax"] == "7.25" and "tax_rate" not in line
+
+
+def test_hook_rejects_a_state_without_nexus_when_the_workspace_asks(app_module: ModuleType) -> None:
+    app_module.store.save_install_config(customer_id=CUSTOMER_ID, config={"default_rate": "5.00", "reject_without_nexus": "true"})
+    app_module.store.save_workspace(customer_id=CUSTOMER_ID, nexus=["CA"], overrides={}, default_tax_code="FT-GOODS-100", tax_code_field=None)
+    client = app_module.app.test_client()
+
+    response = _signed_post(
+        client,
+        "/hooks",
+        {
+            "topic": "Invoice.update", "object_type": "invoice", "action": "update", "id": "5",
+            "payload": {"shipping_address": "2 Elm St, Austin, TX 73301", "lines": [{"amount": "10", "discount": "0"}]},
+            "customer": {"id": CUSTOMER_ID},
+        },
+    )
+
+    assert response.get_json()["reject"]["message"].startswith("FakeTax has no nexus in TX")
 
 
 def test_event_skips_when_tax_already_applied(app_module: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:

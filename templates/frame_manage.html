@@ -12,7 +12,7 @@
   <p class="muted">Workspace <span id="workspace"></span>. Tick the states where you collect tax; override a combined rate where your rate differs.</p>
   <p><label><input type="checkbox" id="select-all"> <strong>Select all</strong> <span class="muted">(states with a sales tax)</span></label></p>
   <table>
-    <thead><tr><th>Nexus</th><th>State</th><th class="num">State</th><th class="num">Local</th><th class="num">Combined</th><th class="num">Override</th><th>Services</th><th>SaaS</th><th>Digital</th><th>Shipping</th></tr></thead>
+    <thead><tr><th>Nexus</th><th>State</th><th class="num">State</th><th class="num">County</th><th class="num">Supplemental</th><th class="num">Combined</th><th class="num">Override</th><th>Services</th><th>SaaS</th><th>Digital</th><th>Shipping</th></tr></thead>
     <tbody id="rows"></tbody>
   </table>
   <p><label>Default tax code <select id="default-code"></select></label>
@@ -42,7 +42,7 @@
       tr.innerHTML =
         '<td class="c"><input type="checkbox" class="nexus" value="' + j.code + '"' + (data.workspace.nexus.includes(j.code) ? " checked" : "") + ' data-taxed="' + (j.has_sales_tax ? 1 : 0) + '"></td>' +
         "<td>" + j.name + ' <span class="muted">' + j.code + "</span></td>" +
-        '<td class="num">' + j.state_rate + "%</td><td class=\"num\">" + j.local_rate + "%</td>" +
+        '<td class="num">' + j.state_rate + "%</td><td class=\"num\">" + j.county_rate + "%</td><td class=\"num\">" + j.supplemental_rate + "%</td>" +
         '<td class="num">' + (j.has_sales_tax ? j.combined_rate + "%" : '<span class="tag">none</span>') + "</td>" +
         '<td class="num"><input class="rate" data-code="' + j.code + '" inputmode="decimal" placeholder="—" value="' + (data.workspace.overrides[j.code] || "") + '"></td>' +
         "<td>" + yn(j.taxes_services) + "</td><td>" + yn(j.taxes_saas) + "</td><td>" + yn(j.taxes_digital) + "</td><td>" + yn(j.taxes_shipping) + "</td>";

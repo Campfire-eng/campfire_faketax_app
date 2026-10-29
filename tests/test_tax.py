@@ -1,5 +1,7 @@
+from dataclasses import replace
 from decimal import Decimal
 
+from jurisdictions import TaxComponents
 from store import WorkspaceTax
 from tax import (
     compute_credit_memo_tax,
@@ -23,6 +25,43 @@ class TestLineTax:
 
     def test_taxes_amount_after_discount(self) -> None:
         assert line_tax(amount=Decimal("100"), discount=Decimal("20"), rate=Decimal("8.00")) == Decimal("6.40")
+
+
+class TestComponents:
+    def test_rate_is_split_into_state_county_and_supplemental(self) -> None:
+        invoice = _invoice(address="Oakland, CA 94607", lines=[{"id": 1, "amount": 100, "tax": 0}])
+
+        result = compute_invoice_tax(invoice=invoice, default_rate="")
+
+        assert result.components == TaxComponents(state=Decimal("6.00"), county=Decimal("0.25"), supplemental=Decimal("1.00"))
+        assert result.rate_code == "FAKETAX-CA-7.250" and result.description == "FakeTax CA 7.25%"
+
+    def test_default_rate_and_overrides_are_split_too(self) -> None:
+        outside = _invoice(address="Boise, ID 83702", lines=[{"id": 1, "amount": 100, "tax": 0}])
+        overridden = _invoice(address="Oakland, CA 94607", lines=[{"id": 1, "amount": 100, "tax": 0}])
+
+        default = compute_invoice_tax(invoice=outside, default_rate="5.00")
+        override = compute_invoice_tax(invoice=overridden, default_rate="", rate_override=Decimal("9.50"))
+
+        assert default.components == TaxComponents(state=Decimal("3.50"), county=Decimal("1.00"), supplemental=Decimal("0.50"))
+        assert default.rate_code == "FAKETAX-ID-5.000"
+        assert override.components is not None and override.components.total == Decimal("9.50")
+
+    def test_nothing_is_split_when_nothing_is_taxed(self) -> None:
+        invoice = _invoice(address="Portland, OR 97201", lines=[{"id": 1, "amount": 100, "tax": 0}])
+
+        assert compute_invoice_tax(invoice=invoice, default_rate="").components is None
+
+    def test_payload_points_the_lines_at_the_campfire_rate(self) -> None:
+        invoice = _invoice(address="Oakland, CA 94607", lines=[{"id": 1, "amount": 100, "tax": 0, "tax_rate": 3}])
+        result = replace(compute_invoice_tax(invoice=invoice, default_rate=""), tax_rate_id=77)
+
+        payload = lines_payload(invoice=invoice, result=result)
+
+        assert payload[0]["tax_rate"] == 77 and payload[0]["tax"] == "7.25"
+        assert payload[0]["tax_rate_name"] == "FakeTax CA 7.25%" and payload[0]["tax_rate_value"] == "0.0725"
+        # Without a resolved rate the line keeps whatever rate it had.
+        assert lines_payload(invoice=invoice, result=replace(result, tax_rate_id=None))[0]["tax_rate"] == 3
 
 
 class TestShippingState:

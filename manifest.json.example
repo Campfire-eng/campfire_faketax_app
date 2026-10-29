@@ -17,7 +17,9 @@
       "invoices:write",
       "credit_memos:write",
       "custom_fields:write",
-      "vendors:read"
+      "vendors:read",
+      "tax_rates:write",
+      "accounts:write"
     ],
     "manage_url": "<APP_URL>/manage"
   },
@@ -190,6 +192,18 @@
         "CreditMemo.updated"
       ],
       "endpoint_url": "<APP_URL>/events",
+      "is_active": true
+    }
+  ],
+  "hooks": [
+    {
+      "topics": [
+        "Invoice.create",
+        "Invoice.update"
+      ],
+      "endpoint_url": "<APP_URL>/hooks",
+      "on_failure": "proceed",
+      "preview_label": "Preview FakeTax",
       "is_active": true
     }
   ]

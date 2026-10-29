@@ -1,11 +1,13 @@
 """
-FakeTax's seeded tax tables: US state jurisdictions with a state rate and an average local add-on,
-which kinds of sales each state taxes, and the product tax codes a line can carry. The numbers
+FakeTax's seeded tax tables: US state jurisdictions with a state rate, an average county rate and a
+supplemental (special district) rate, which kinds of sales each state taxes, and the product tax codes a line can carry. The numbers
 are illustrative, not advice.
 """
 
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
+
+RATE_PLACES: Decimal = Decimal("0.0001")
 
 
 @dataclass(frozen=True)
@@ -13,11 +15,16 @@ class Jurisdiction:
     code: str
     name: str
     state_rate: Decimal
-    local_rate: Decimal
+    county_rate: Decimal
+    supplemental_rate: Decimal
     taxes_services: bool
     taxes_saas: bool
     taxes_digital: bool
     taxes_shipping: bool
+
+    @property
+    def local_rate(self) -> Decimal:
+        return self.county_rate + self.supplemental_rate
 
     @property
     def combined_rate(self) -> Decimal:
@@ -52,12 +59,15 @@ RULE_LABELS: dict[str, str] = {
 }
 
 
-def _j(code: str, name: str, state: str, local: str, services: bool, saas: bool, digital: bool, shipping: bool) -> Jurisdiction:
+def _j(
+    code: str, name: str, state: str, county: str, supplemental: str, services: bool, saas: bool, digital: bool, shipping: bool
+) -> Jurisdiction:
     return Jurisdiction(
         code=code,
         name=name,
         state_rate=Decimal(state),
-        local_rate=Decimal(local),
+        county_rate=Decimal(county),
+        supplemental_rate=Decimal(supplemental),
         taxes_services=services,
         taxes_saas=saas,
         taxes_digital=digital,
@@ -68,26 +78,55 @@ def _j(code: str, name: str, state: str, local: str, services: bool, saas: bool,
 JURISDICTIONS: dict[str, Jurisdiction] = {
     j.code: j
     for j in (
-        #   code  name              state    local   services saas   digital shipping
-        _j("AZ", "Arizona", "5.60", "2.80", False, True, True, False),
-        _j("CA", "California", "7.25", "0.00", False, False, False, False),
-        _j("CO", "Colorado", "2.90", "4.90", False, False, True, False),
-        _j("DE", "Delaware", "0.00", "0.00", False, False, False, False),
-        _j("FL", "Florida", "6.00", "1.00", False, False, False, False),
-        _j("GA", "Georgia", "4.00", "3.35", False, False, False, True),
-        _j("IL", "Illinois", "6.25", "2.60", False, False, False, False),
-        _j("MA", "Massachusetts", "6.25", "0.00", False, True, True, False),
-        _j("MT", "Montana", "0.00", "0.00", False, False, False, False),
-        _j("NH", "New Hampshire", "0.00", "0.00", False, False, False, False),
-        _j("NJ", "New Jersey", "6.625", "0.00", False, False, True, True),
-        _j("NY", "New York", "4.00", "4.00", False, True, True, True),
-        _j("OH", "Ohio", "5.75", "1.50", True, True, True, True),
-        _j("OR", "Oregon", "0.00", "0.00", False, False, False, False),
-        _j("PA", "Pennsylvania", "6.00", "0.35", False, True, True, True),
-        _j("TX", "Texas", "6.25", "0.00", True, True, True, True),
-        _j("WA", "Washington", "6.50", "0.00", True, True, True, True),
+        #   code  name              state    county  suppl.  services saas   digital shipping
+        _j("AZ", "Arizona", "5.60", "0.70", "2.10", False, True, True, False),
+        _j("CA", "California", "6.00", "0.25", "1.00", False, False, False, False),
+        _j("CO", "Colorado", "2.90", "1.00", "3.90", False, False, True, False),
+        _j("DE", "Delaware", "0.00", "0.00", "0.00", False, False, False, False),
+        _j("FL", "Florida", "6.00", "0.50", "0.50", False, False, False, False),
+        _j("GA", "Georgia", "4.00", "3.00", "0.35", False, False, False, True),
+        _j("IL", "Illinois", "6.25", "1.75", "0.85", False, False, False, False),
+        _j("MA", "Massachusetts", "5.00", "0.75", "0.50", False, True, True, False),
+        _j("MT", "Montana", "0.00", "0.00", "0.00", False, False, False, False),
+        _j("NH", "New Hampshire", "0.00", "0.00", "0.00", False, False, False, False),
+        _j("NJ", "New Jersey", "5.625", "0.50", "0.50", False, False, True, True),
+        _j("NY", "New York", "4.00", "3.625", "0.375", False, True, True, True),
+        _j("OH", "Ohio", "5.75", "1.25", "0.25", True, True, True, True),
+        _j("OR", "Oregon", "0.00", "0.00", "0.00", False, False, False, False),
+        _j("PA", "Pennsylvania", "6.00", "0.25", "0.10", False, True, True, True),
+        _j("TX", "Texas", "5.25", "0.50", "0.50", True, True, True, True),
+        _j("WA", "Washington", "5.00", "1.00", "0.50", True, True, True, True),
     )
 }
+
+# How a rate is split when the ship-to state is not in the table (the install default rate).
+DEFAULT_JURISDICTION: Jurisdiction = _j("XX", "Default", "3.50", "1.00", "0.50", True, True, True, True)
+
+
+@dataclass(frozen=True)
+class TaxComponents:
+    """One combined rate as the three rates Campfire books separately, in percent."""
+
+    state: Decimal
+    county: Decimal
+    supplemental: Decimal
+
+    @property
+    def total(self) -> Decimal:
+        return self.state + self.county + self.supplemental
+
+
+def split_rate(*, total: Decimal, like: Jurisdiction) -> TaxComponents:
+    """``total`` split the way ``like`` splits its own rate; the state share absorbs rounding."""
+    if total == like.combined_rate:
+        return TaxComponents(state=like.state_rate, county=like.county_rate, supplemental=like.supplemental_rate)
+    basis: Jurisdiction = like if like.has_sales_tax else DEFAULT_JURISDICTION
+    county: Decimal = (total * basis.county_rate / basis.combined_rate).quantize(RATE_PLACES, rounding=ROUND_HALF_UP)
+    supplemental: Decimal = (total * basis.supplemental_rate / basis.combined_rate).quantize(
+        RATE_PLACES, rounding=ROUND_HALF_UP
+    )
+    return TaxComponents(state=total - county - supplemental, county=county, supplemental=supplemental)
+
 
 STATE_NAMES: dict[str, str] = {j.name.upper(): j.code for j in JURISDICTIONS.values()}
 

@@ -1,8 +1,8 @@
 # FakeTax
 
 A demo Campfire OAuth app that puts made-up sales tax on invoices. It exists to exercise every
-app-extension capability: link, webhook and iframe buttons, embedded panels, event subscriptions
-and install config. The tax is fake; the plumbing is real.
+app-extension capability: link, webhook and iframe buttons, embedded panels, event subscriptions,
+pre-save hooks and install config. The tax is fake; the plumbing is real.
 
 Tax rule: the invoice's shipping state (or, for a credit memo, the client's address) picks a
 jurisdiction from `jurisdictions.py`, seventeen US states with a state rate, an average local
@@ -33,7 +33,7 @@ Until a workspace finishes onboarding FakeTax taxes everywhere, so the demo work
    URL (e.g. `https://abc.ngrok-free.app`) and `<APP_DOMAIN>` with its host, then paste it into the
    app's Manifest tab and save. It sets the app's details (redirect URL `<APP_URL>/callback`, connect URL, the
    `openid`, `email` and `profile` identity scopes and the `invoices:read`, `invoices:write`,
-   `credit_memos:write`, `custom_fields:write` and `vendors:read` scopes), the allowed domain, five buttons, two panels, a
+   `credit_memos:write`, `custom_fields:write`, `vendors:read`, `tax_rates:write` and `accounts:write` scopes), the allowed domain, five buttons, two panels, a
    sidebar section with three pages, and the invoice and credit memo event subscriptions. The app section is versioned: applying it opens a development version,
    so click **Promote** on the app page to make it live. For a private app that is immediate,
    with no review. The allowed domain, signing secret, slots and events are not versioned and
@@ -112,7 +112,23 @@ the login page when signed out; webhooks, frames and report links use their own 
 11. **Panels**: the invoice detail page and the edit modal gain a **FakeTax** tab showing the same
     breakdown frame embedded in the page; the invoice list gains a **FakeTax** tab with the
     workspace's settings (default rate, auto-calculate), saved straight into install config.
-12. **Revoke**: disconnect FakeTax from the workspace in Campfire. Reload the invoice: the FakeTax
+12. **Hooks**: create an invoice in Campfire shipping to California and save it. Before the save
+    Campfire posts the payload to `/hooks`; FakeTax returns it with 7.25% on every line, so the
+    invoice is saved with tax already on it, from the form, the public API or an MCP tool alike.
+    Every FakeTax rate is a state rate, a county rate and a supplemental rate (California: 6.00 +
+    0.25 + 1.00). While answering the hook FakeTax upserts a Campfire tax rate for the jurisdiction
+    and percentage (`GET/POST/PATCH /coa/api/tax_rate`, code `FAKETAX-CA-7.250`) with one line per
+    component, each on its own liability account (`FakeTax State Tax Payable`, `County`,
+    `Supplemental`, created through `POST /coa/api/account` on first use with the first free
+    numbers from 236110), and points every
+    invoice line's `tax_rate` at it. Campfire then posts the tax as three ledger lines instead of
+    one, and the sales tax report shows the split. If Campfire cannot be reached within the budget
+    the lines still get the flat tax amount, just not the rate.
+    The invoice and bill forms also show a **Preview FakeTax** button (the hook's `preview_label`):
+    it runs the same endpoint on the unsaved form, marked `"preview": true`, and fills the lines
+    in without saving. Set `reject_without_nexus` to `true` in install config and save an invoice
+    shipping to a state without nexus: the save is refused with FakeTax's message.
+13. **Revoke**: disconnect FakeTax from the workspace in Campfire. Reload the invoice: the FakeTax
     buttons and tabs are gone, because they only show while the workspace is connected.
 
 ## How it maps to Campfire capabilities
@@ -127,6 +143,7 @@ the login page when signed out; webhooks, frames and report links use their own 
 | Panel, detail page and edit modal | `breakdown-tab` | `GET /frame/breakdown/<id>?cf_ctx=` | The breakdown frame embedded as a tab; same cookie and bridge, no drawer |
 | Panel, list page | `settings` | `GET /frame/settings?cf_ctx=`, `POST /frame/api/settings[/save]` | A token with no record; settings written to install config from inside Campfire |
 | Event subscription | `event_subscriptions` | `POST /events` | Signed thin events; FakeTax re-reads the invoice with its own token |
+| Hook, before create and update | `hooks` | `POST /hooks` → `GET/POST/PATCH /coa/api/tax_rate`, `GET/POST /coa/api/account` | Synchronous, signed, 5-second budget; FakeTax upserts a three-line tax rate (state, county, supplemental on their own accounts) and rewrites `lines[].tax` and `lines[].tax_rate` before Campfire saves, or rejects the write; `preview_label` adds a form button that runs it on the unsaved form |
 | Install config | (none) | `GET/PUT /ca/api/v1/oauth-app-install/config` | Per-workspace `default_rate`, `auto_calculate`, `base_url` set by the app's own token |
 | Onboarding | `connect_url` + `return_to` | `/setup/<workspace>` (3 steps) | Nexus, default tax code, custom field creation with the app token, return to Campfire |
 | Manage link | `manage_url` | `GET /manage?cf_ctx=`, `/manage/<workspace>` | Signed entry from the connection page; single-use token, then a browser session |
