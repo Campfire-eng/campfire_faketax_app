@@ -4,6 +4,7 @@
   const script = document.currentScript;
   let hostOrigin = (script && script.dataset.hostOrigin) || "https://app.meetcampfire.com";
   const pending = new Map();
+  const themeListeners = [];
 
   function newId() {
     if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
@@ -27,6 +28,9 @@
       clearTimeout(waiter.timer);
       waiter.resolve(msg.payload);
     }
+    if (msg.type === "theme" && msg.payload) {
+      themeListeners.forEach(function (listener) { listener(msg.payload.theme); });
+    }
   });
 
   window.CampfireBridge = {
@@ -44,6 +48,8 @@
         post("ready", undefined, id);
       });
     },
+    // ready() resolves with the current theme; this reports changes after that.
+    onThemeChange: function (listener) { themeListeners.push(listener); },
     toast: function (level, message) { post("toast", { level: level, message: message }); },
     refresh: function () { post("refresh"); },
     resize: function (height) {
